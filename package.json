@@ -1,0 +1,27 @@
+{
+  "name": "agent-mailbox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "bin": {
+    "mailbox": "./bin/mailbox.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "cli": "node bin/mailbox.js",
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/server.js && node --check src/store.js && node --check bin/mailbox.js && node --check src/codex.js && node --check src/claude.js && node --check public/app.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "dompurify": "^3.0.0",
+    "marked": "^17.0.0",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "zod": "^4.5.4"
+  }
+}
