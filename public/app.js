@@ -121,7 +121,7 @@ function renderDetails() {
   $("#topic-project").value = current.project_id ?? "";
   $("#goal").textContent = current.goal;
   const memberStatus = (p) => {
-    if (p.kind === "human") return "网页参与者";
+    if (p.kind === "human") return "";
     const route = state.recipients.find((r) => r.participant_id === p.id);
     if (route)
       return route.status === "ready"
