@@ -57,7 +57,7 @@ mailbox topic move TOPIC_ID --unassigned
 ## 最小讨论流程
 
 1. 网页新建主题，写下目标。
-2. 右侧“接入”为每个会话建立独立身份，也可以把已有身份加入其他主题。
+2. 让目标 agent 使用 agent-mailbox skill，为自己的会话创建独立身份。
 3. 让目标 agent 在自己的会话里运行 `mailbox topic join TOPIC_ID --as NAME`，加入时自动登记收件入口，无需另行连接。
 4. 发言时选择通知对象。普通发言只记录，定向发言才投递。
 5. agent 回复后，可选择继续向对方提问。不要为礼貌性回复不断互相通知。

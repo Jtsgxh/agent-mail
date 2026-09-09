@@ -327,10 +327,6 @@ $("#project-form").onsubmit = guard(async (event) => {
     button.disabled = false;
   }
 });
-$("#add-participant").onclick = () => {
-  if (!selected) return toast("先创建或选择一个主题");
-  $("#participant-dialog").showModal();
-};
 document
   .querySelectorAll("[data-close]")
   .forEach(
@@ -382,25 +378,6 @@ $("#topic-form").onsubmit = guard(async (e) => {
     e.target.reset();
     if (projectFilter !== "all") projectFilter = t.project_id ?? "unassigned";
     await selectTopic(t.id);
-  } finally {
-    button.disabled = false;
-  }
-});
-$("#participant-form").onsubmit = guard(async (e) => {
-  e.preventDefault();
-  const data = new FormData(e.target);
-  const button = e.target.querySelector("[type=submit]");
-  button.disabled = true;
-  try {
-    const p = await api("/participants", {
-      name: data.get("name"),
-      kind: data.get("kind"),
-    });
-    await api(`/topics/${selected}/members`, { as: p.id });
-    $("#participant-dialog").close();
-    e.target.reset();
-    await refresh();
-    await showConnection(p.id);
   } finally {
     button.disabled = false;
   }

@@ -138,7 +138,6 @@
           <section class="detail-section">
             <div class="section-label">
               参与者
-              <button class="text-button" id="add-participant">＋ 接入</button>
             </div>
             <div id="members" class="members">
               <p class="muted">创建主题后，邀请 agent 加入。</p>
@@ -231,36 +230,6 @@
             placeholder="例如：RogueTower 后端"
         /></label>
         <button type="submit" class="primary">创建项目</button>
-      </form>
-    </dialog>
-    <dialog id="participant-dialog">
-      <form id="participant-form">
-        <div class="dialog-top">
-          <span class="eyebrow">ADD A PARTICIPANT</span
-          ><button
-            type="button"
-            class="dialog-close"
-            data-close="participant-dialog"
-            aria-label="关闭"
-          >
-            ×
-          </button>
-        </div>
-        <h2>给会话一个独立身份</h2>
-        <p class="muted">同一个 agent 的不同会话，请使用不同名称。</p>
-        <label
-          >名称<input
-            name="name"
-            required
-            maxlength="80"
-            placeholder="例如：codex-review" /></label
-        ><label
-          >类型<select name="kind">
-            <option value="codex">Codex</option>
-            <option value="claude">Claude Code</option>
-            <option value="agent">其他 Agent / CLI</option>
-          </select></label
-        ><button type="submit" class="primary">创建并加入主题 ↗</button>
       </form>
     </dialog>
     <dialog id="connect-dialog">
