@@ -24,8 +24,7 @@ let selected = location.hash.slice(1),
   hasMore = false;
 let refreshId = 0,
   toastTimer,
-  refreshTimer,
-  connectionCommand = "";
+  refreshTimer;
 let sending = false,
   pendingPost = null;
 const drafts = new Map();
@@ -130,13 +129,13 @@ function renderDetails() {
         : "! 通知失败，重新加入可重试";
     if (state.bridges.some((b) => b.participant_id === p.id))
       return "● 旧版通知进程在线";
-    return ["codex", "claude"].includes(p.kind) ? "○ 等待会话加入" : "手动收信";
+    return ["codex", "claude"].includes(p.kind) ? "" : "手动收信";
   };
   $("#members").innerHTML = current.members
-    .map(
-      (p) =>
-        `<div class="member">${avatar(p)}<div class="member-info"><div class="member-name">${escapeHtml(p.name)}</div><div class="member-status">${memberStatus(p)}</div></div>${p.kind !== "human" ? `<button data-connect="${p.id}">参与方式</button>` : ""}</div>`,
-    )
+    .map((p) => {
+      const status = memberStatus(p);
+      return `<div class="member">${avatar(p)}<div class="member-info"><div class="member-name">${escapeHtml(p.name)}</div>${status ? `<div class="member-status">${status}</div>` : ""}</div></div>`;
+    })
     .join("");
   const outsiders = state.participants.filter(
     (p) => !current.members.some((m) => m.id === p.id),
@@ -251,34 +250,6 @@ async function selectTopic(id) {
   await refresh();
   if (draft?.recipient) $("#recipient").value = draft.recipient;
 }
-async function showConnection(id) {
-  const p = state.participants.find((p) => p.id === id);
-  const setup = await api("/setup");
-  $("#connect-title").textContent = `让 ${p.name} 加入讨论`;
-  const identity = /^[\p{L}\p{N}_.-]+$/u.test(p.name) ? p.name : p.id;
-  const urlOption =
-    location.origin === "http://127.0.0.1:4317"
-      ? ""
-      : ` --url ${location.origin}`;
-  if (["codex", "claude"].includes(p.kind)) {
-    connectionCommand = `mailbox topic join ${selected} --as ${identity}${urlOption}`;
-    $("#connect-description").textContent =
-      "把这条加入命令交给对应 agent，在它自己的会话里执行即可。加入时自动登记通知入口，信箱直接投递新信。";
-    $("#connect-footnote").textContent =
-      p.kind === "claude"
-        ? "无需另行连接或启动后台进程。Claude 从自身环境取得收件地址；入口缺失会明确报错。服务重启后重新加入即可。"
-        : "无需另行连接或启动后台进程。Codex 自动使用当前会话 ID；普通终端需补 --thread。入口已登记不代表模型在线或已读。";
-  } else {
-    connectionCommand = `node "${setup.cli}" --url ${location.origin} inbox --as ${p.id}`;
-    $("#connect-description").textContent =
-      "让已有会话使用 CLI 主动读信和回信。";
-    $("#connect-footnote").textContent =
-      "普通 CLI 读信不会自动唤醒已结束的轮次。";
-  }
-  $("#connect-command").textContent = connectionCommand;
-  $("#connect-dialog").showModal();
-}
-
 $("#new-topic").onclick = $("#first-topic").onclick = () => {
   $("#create-topic-project").innerHTML = projectOptions();
   $("#create-topic-project").value = ["all", "unassigned"].includes(
@@ -346,10 +317,6 @@ document.querySelectorAll("[data-filter]").forEach(
 $("#topics").onclick = guard(async (e) => {
   const b = e.target.closest("[data-topic]");
   if (b) await selectTopic(b.dataset.topic);
-});
-$("#members").onclick = guard(async (e) => {
-  const b = e.target.closest("[data-connect]");
-  if (b) await showConnection(b.dataset.connect);
 });
 $("#messages").onclick = (e) => {
   const b = e.target.closest("[data-reply]");
@@ -466,10 +433,6 @@ $("#ack-visible").onclick = guard(async () => {
   await api(`/topics/${id}/ack`, { as: "human", through });
   await refresh();
   toast(`已确认阅读至 #${through}`);
-});
-$("#copy-command").onclick = guard(async () => {
-  await navigator.clipboard.writeText(connectionCommand);
-  toast("已复制");
 });
 window.addEventListener(
   "hashchange",

@@ -663,10 +663,6 @@ input::placeholder {
   color: #a1ab96;
   margin-top: 5px;
 }
-.member button {
-  font-size: 10px;
-  color: #768a68;
-}
 #join-existing {
   display: flex;
   gap: 6px;
@@ -871,16 +867,6 @@ dialog select {
 }
 dialog .primary {
   width: 100%;
-}
-dialog pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  background: #f1f5ec;
-  color: #5e754e;
-  padding: 15px;
-  border-radius: 7px;
-  font-size: 11px;
-  line-height: 1.8;
 }
 .toast {
   position: fixed;
