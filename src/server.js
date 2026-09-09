@@ -213,6 +213,27 @@ export async function startServer({
       }
       if (req.method === "GET" && path === "/api/inbox")
         return send(store.inbox(query.as));
+      const sessionRoute = path.match(/^\/api\/topics\/([^/]+)\/sessions\/([^/]+)$/);
+      if (sessionRoute) {
+        const [, topic, kind] = sessionRoute;
+        if (req.method === "GET") {
+          const session = store.session(topic, kind);
+          return send(session && {
+            ...session,
+            notification: recipients.status().find((r) => r.participant_id === session.participant_id) ?? null,
+          });
+        }
+        if (req.method === "POST") {
+          const session = store.reserveSession(topic, { ...body, kind });
+          changed();
+          return send(session, 201);
+        }
+        if (req.method === "PATCH") {
+          const session = store.updateSession(topic, kind, body);
+          changed();
+          return send(session);
+        }
+      }
       let match = path.match(
         /^\/api\/topics\/([^/]+)(?:\/(messages|members|ack))?$/,
       );

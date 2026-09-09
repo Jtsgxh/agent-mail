@@ -51,6 +51,14 @@ export class Store {
         topic_id TEXT REFERENCES topics(id), participant_id TEXT REFERENCES participants(id),
         read_through INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(topic_id, participant_id)
       );
+      CREATE TABLE IF NOT EXISTS sessions (
+        topic_id TEXT NOT NULL REFERENCES topics(id), kind TEXT NOT NULL,
+        participant_id TEXT NOT NULL UNIQUE REFERENCES participants(id),
+        requested_by TEXT NOT NULL REFERENCES participants(id), cwd TEXT NOT NULL,
+        native_id TEXT, launch_status TEXT NOT NULL DEFAULT 'reserved', error TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        PRIMARY KEY(topic_id,kind)
+      );
       CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, topic_id TEXT NOT NULL REFERENCES topics(id),
         author_id TEXT NOT NULL REFERENCES participants(id), body TEXT NOT NULL,
@@ -112,6 +120,44 @@ export class Store {
   }
   close() {
     this.db.close();
+  }
+  session(topic, kind) {
+    this.topic(topic);
+    if (!["codex", "claude"].includes(kind)) throw new HttpError(400, "会话类型必须为 codex 或 claude");
+    return this.db.prepare("SELECT * FROM sessions WHERE topic_id=? AND kind=?").get(topic, kind) ?? null;
+  }
+  reserveSession(topic, { kind, as, cwd }) {
+    if (this.topic(topic).status !== "open") throw new HttpError(409, "只可为开放主题创建会话");
+    this.member(topic, as);
+    cwd = required(cwd, "cwd", 4000);
+    const existing = this.session(topic, kind);
+    if (existing) throw new HttpError(409, `此主题已有 ${kind} 会话记录，请使用 session info 查看；不会重复启动`);
+    this.db.exec("BEGIN");
+    try {
+      const participant = this.createParticipant({ name: `${kind}-${topic}`, kind });
+      this.db.prepare("INSERT INTO sessions(topic_id,kind,participant_id,requested_by,cwd) VALUES (?,?,?,?,?)")
+        .run(topic, kind, participant.id, as, cwd);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return this.session(topic, kind);
+  }
+  updateSession(topic, kind, { nativeId, launchStatus, error = null }) {
+    const session = this.session(topic, kind);
+    if (!session) throw new HttpError(404, "会话记录不存在");
+    if (nativeId !== undefined) {
+      nativeId = required(nativeId, "nativeId");
+      if (session.native_id && session.native_id !== nativeId) throw new HttpError(409, "不能更换已绑定会话");
+    }
+    if (!["reserved", "submitted", "uncertain"].includes(launchStatus)) throw new HttpError(400, "launchStatus 无效");
+    if (session.launch_status !== "reserved") throw new HttpError(409, "启动结果已记录，不可重新启动");
+    if (launchStatus === "submitted" && !(nativeId ?? session.native_id)) throw new HttpError(400, "缺少原生会话 ID");
+    if (error !== null) error = required(error, "error", 2000);
+    this.db.prepare("UPDATE sessions SET native_id=COALESCE(?,native_id),launch_status=?,error=? WHERE topic_id=? AND kind=?")
+      .run(nativeId ?? null, launchStatus, error, topic, kind);
+    return this.session(topic, kind);
   }
   project(id) {
     const project = this.db

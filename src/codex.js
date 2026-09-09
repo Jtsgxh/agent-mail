@@ -16,7 +16,7 @@ export class CodexConnection extends EventEmitter {
     if (launch) {
       this.child = spawn(
         launch.command,
-        [...launch.args, "app-server", "--stdio"],
+        [...launch.args, "app-server", launch.proxy ? "proxy" : "--stdio"],
         {
           cwd: launch.cwd,
           windowsHide: true,

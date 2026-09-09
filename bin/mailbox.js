@@ -17,7 +17,10 @@ mailbox project create --name NAME
 mailbox project list
 mailbox participant create --name NAME [--kind codex|claude|agent]
 mailbox participant list
+mailbox session create claude|codex --topic TOPIC --cwd PATH --as INITIATOR_ID [--timeout 60]
+mailbox session info claude|codex --topic TOPIC
 mailbox topic create --title TITLE --body TEXT [--as ID] [--project NAME_OR_ID]
+mailbox topic show TOPIC
 mailbox topic list [--project NAME_OR_ID | --unassigned]
 mailbox topic move TOPIC --project NAME_OR_ID
 mailbox topic move TOPIC --unassigned
@@ -84,6 +87,8 @@ try {
           "agent-bin",
           "socket",
           "project",
+          "topic",
+          "cwd",
         ].map((k) => [k, { type: "string" }]),
       ),
     },
@@ -139,7 +144,18 @@ try {
     return matches[0].id;
   };
   let result;
-  if (p[0] === "connect") {
+  if (p[0] === "session" && ["create", "info"].includes(p[1])) {
+    const { createSession, sessionPath } = await import("../src/sessions.js");
+    const topic = requireValue("topic");
+    result = p[1] === "info"
+      ? await client.request(sessionPath(topic, p[2]))
+      : await createSession(client, p[2], {
+          topic, cwd: requireValue("cwd"), as: requireValue("as"),
+          agentBin: v["agent-bin"], endpoint: v.endpoint,
+          timeout: int("timeout", 60, 300), maxMessages: int("max-messages", 20),
+          signal: controller.signal,
+        });
+  } else if (p[0] === "connect") {
     const { connectMailbox } = await import("../src/connect.js");
     const maxMessages = int("max-messages", 20);
     if (maxMessages < 1) throw new Error("消息上限必须大于 0");
@@ -179,6 +195,8 @@ try {
       as: v.as ?? "human",
       project: await projectId(),
     });
+  else if (p[0] === "topic" && p[1] === "show")
+    result = await client.request(topicPath(p[2]));
   else if (p[0] === "topic" && p[1] === "list")
     result = await client.request(
       v.project !== undefined || v.unassigned
