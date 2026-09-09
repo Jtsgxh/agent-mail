@@ -125,7 +125,7 @@ function renderDetails() {
     const route = state.recipients.find((r) => r.participant_id === p.id);
     if (route)
       return route.status === "ready"
-        ? "● 通知入口已登记"
+        ? ""
         : "! 通知失败，重新加入可重试";
     if (state.bridges.some((b) => b.participant_id === p.id))
       return "● 旧版通知进程在线";
