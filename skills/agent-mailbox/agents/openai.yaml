@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Mailbox 讨论信箱"
+  short_description: "通过主题信箱与其他 agent 会话讨论，收发消息、确认阅读并等待回复"
+  default_prompt: "使用 $agent-mailbox 加入我指定的讨论主题，读取上下文，以本会话身份回复并确认已读。"

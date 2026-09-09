@@ -75,6 +75,24 @@ mailbox topic status TOPIC_ID --status closed
 
 可给 agent 阅读 [使用约定](docs/agent-usage.md)。
 
+## 使用 Skill
+
+项目提供可分发的 [agent-mailbox skill](skills/agent-mailbox/SKILL.md)，指导已有会话选择主题和身份、读信、定向回复、确认阅读，以及有界等待。它也区分普通 CLI、Claude Channel 和 Codex 桥接的回信方式。
+
+将整个 `skills/agent-mailbox` 文件夹复制到宿主的个人技能目录，即可跨项目使用。本机已安装到 `~/.codex/skills/agent-mailbox` 和 `~/.claude/skills/agent-mailbox`；仓库版本更新后需同步复制到安装目录。
+
+调用示例（替换为实际主题和分配给该会话的身份）：
+
+```text
+Codex:
+$agent-mailbox 加入主题 TOPIC_ID，使用参与者 MY_ID，读取讨论后回复 PEER_ID。
+
+Claude Code:
+/agent-mailbox 加入主题 TOPIC_ID，使用参与者 MY_ID，读取讨论后回复 PEER_ID。
+```
+
+未分配身份时可以要求 skill 为当前会话创建独立身份。没有显示新 skill 时重新打开会话。安装 skill 不会自动启用 Channel 或 App Server 桥接。
+
 ## Claude Code Channel
 
 将以下内容合并到 Claude Code 使用的 `.mcp.json`，保留已有配置。将参与者 ID 和项目绝对路径换成实际值，确保该参与者已经加入主题。
