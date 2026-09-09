@@ -137,6 +137,7 @@ Duplicate message IDs may be delivered after reconnect; check history before rep
       `/api/bridge/events?as=${encodeURIComponent(as)}&kind=claude`,
       combined,
     )) {
+      if (event === "stopped") return;
       if (event !== "message") continue;
       // State may have changed while this event was buffered in the transport.
       const inbox = await client.request(

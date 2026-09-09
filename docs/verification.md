@@ -22,7 +22,7 @@ Codex 协议测试使用模拟 App Server；Claude 协议测试使用官方 MCP 
 
 使用 Codex 内置浏览器实际操作本机服务，检查空状态、创建主题、Markdown/代码块消息、创建参与者及连接说明、定向通知显示待投递、暂停/恢复、关闭后禁用发送、重新打开，以及人工确认已读。浏览器未报告 JavaScript 错误或警告。
 
-## 简化连接入口
+## 简化连接入口（旧版，已被原生通知接入替换）
 
 新增 `mailbox connect` 后，19 项自动化测试通过，包括参与者名称解析、只读预览、Windows npm 启动脚本解析、实际 CLI 子进程列会话、选择已有会话后完成回复与确认，以及初始化失败时释放所启动的进程。
 
@@ -30,8 +30,18 @@ Codex 协议测试使用模拟 App Server；Claude 协议测试使用官方 MCP 
 
 网页实际检查了 Claude 的简化命令展示。Claude 新入口的参数生成和 MCP stdio 通道经过测试，但用户终端中的会话选择与自定义 Channel 确认仍需实际操作，不能视为已完成真实 Claude 自动唤醒验收。
 
+## 原生通知接入（当前版本）
+
+`npm run check` 与 20 项自动化测试通过。新增测试覆盖 Codex queue 参数及失败保留未确认、暂停/恢复、重连重投、Windows 实际命名管道的认证及消息帧、后台通知进程订阅成功才返回，以及 disconnect 让通知进程退出。原生通知不创建或恢复 agent，不代发回信、不自动 ACK。
+
+已运行 `node scripts/smoke-codex.js CODEX_ENTRY --native`（CODEX_ENTRY 为本机 CLI 实际入口）：在独立测试 App Server 中，同一个真实 Codex 会话两次从空闲收到 `codex queue` 通知并产生模型响应。测试指令禁止调用工具，模型明确表示未读信、未回信、未确认；两次 mailboxAutoAck 均为 false。测试会话已归档，测试服务已关闭。此项证明原生队列可以触发同一会话的新轮次，不意味着模型已经完成信箱收发闭环。
+
+Claude 原生入口的测试使用真实本机命名管道和模拟接收端，验证了 auth/user NDJSON 帧及不可达错误；没有向用户其他 Claude 会话投递测试消息，尚未验证真实 Claude 模型自动消费。管道写入成功仅表示传输完成，不能证明接收策略放行或模型处理成功。
+
+本机信箱服务已重启加载新接口，原讨论保留。内置浏览器实际检查 Codex / Claude 连接按钮，均显示目标会话内部执行的 --background 命令及原生入口说明；浏览器未报告 JavaScript 错误或警告。两端已安装的 skill 与仓库版本 SHA-256 一致，skill 校验通过。
+
 ## 尚未证明的部分
 
-- 真实 Claude Code 在交互终端启用自定义 Channel 后，模型自动消费来信并回信。安装和协议实现已提供，需要在对应 Claude 会话中启用 Channel。
-- 自动连接任意已经打开的 Codex 桌面或 CLI 窗口。第一版只连接用户明确提供的 App Server 地址和可恢复会话 ID。
+- 真实 Claude Code 原生收件入口自动消费来信并回信，需要目标会话在自身环境中执行 connect。旧版自定义 Channel 的真实模型消费也未验收。
+- 任意 Codex 桌面或 CLI 会话都能被当前 queue 路由到。已验证独立测试 App Server；实际接入仍取决于目标会话所在服务能否由 queue 访问，必要时明确提供 --endpoint。
 - 多机、多用户认证隔离、自动启动 agent、自动恢复已经退出的 agent 进程，不属于本版本功能。

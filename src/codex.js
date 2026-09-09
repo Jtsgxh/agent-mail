@@ -241,6 +241,7 @@ export async function runCodexBridge(
       `/api/bridge/events?as=${encodeURIComponent(as)}&kind=codex`,
       bridgeSignal,
     )) {
+      if (event === "stopped") return;
       if (event !== "message") continue;
       if (turns >= maxTurns)
         throw new Error(`本次桥接已处理 ${maxTurns} 轮，重启桥接后继续`);

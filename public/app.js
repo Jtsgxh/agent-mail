@@ -87,7 +87,7 @@ function renderDetails() {
   $("#members").innerHTML = current.members
     .map(
       (p) =>
-        `<div class="member">${avatar(p)}<div class="member-info"><div class="member-name">${escapeHtml(p.name)}</div><div class="member-status">${p.kind === "human" ? "网页参与者" : connected.has(p.id) ? "● 桥接已连接" : "○ 桥接未连接"}</div></div>${p.kind !== "human" ? `<button data-connect="${p.id}">连接</button>` : ""}</div>`,
+        `<div class="member">${avatar(p)}<div class="member-info"><div class="member-name">${escapeHtml(p.name)}</div><div class="member-status">${p.kind === "human" ? "网页参与者" : connected.has(p.id) ? (state.bridges.find((b) => b.participant_id === p.id)?.kind.endsWith("-native") ? "● 原生通知已订阅" : "● 桥接已连接") : "○ 桥接未连接"}</div></div>${p.kind !== "human" ? `<button data-connect="${p.id}">连接</button>` : ""}</div>`,
     )
     .join("");
   const outsiders = state.participants.filter(
@@ -205,35 +205,25 @@ async function showConnection(id) {
   const p = state.participants.find((p) => p.id === id);
   const setup = await api("/setup");
   $("#connect-title").textContent = `接入 ${p.name}`;
-  if (p.kind === "claude") {
-    const identity = /^[\p{L}\p{N}_.-]+$/u.test(p.name) ? p.name : p.id;
-    const urlOption =
-      location.origin === "http://127.0.0.1:4317"
-        ? ""
-        : ` --url ${location.origin}`;
-    connectionCommand = `mailbox connect claude --as ${identity}${urlOption}`;
+  const identity = /^[\p{L}\p{N}_.-]+$/u.test(p.name) ? p.name : p.id;
+  const urlOption =
+    location.origin === "http://127.0.0.1:4317"
+      ? ""
+      : ` --url ${location.origin}`;
+  if (["codex", "claude"].includes(p.kind)) {
+    connectionCommand = `mailbox connect ${p.kind} --as ${identity} --background${urlOption}`;
     $("#connect-description").textContent =
-      "在原项目目录的普通终端执行这一条命令。程序会准备好连接配置，然后打开 Claude 的已有会话选择器。";
+      "把这条命令交给要参与讨论的 agent，让它在自己的会话中执行。通知程序会留在后台，原会话保持打开。";
     $("#connect-footnote").textContent =
-      "先退出要继续的 Claude 会话，再选择恢复它。首次仍需在 Claude 中确认自定义 Channel；无需手动修改 MCP 配置。";
+      p.kind === "claude"
+        ? "使用 Claude 原生收件管道，不需要 Channel 或重启会话。若缺少收件环境变量，先在 Claude 中查看 /status 的 Peer address；不会自动修改接收策略。"
+        : "从目标会话取得 CODEX_THREAD_ID，用 codex queue 提交通知。普通终端需补 --thread 会话ID；若原宿主使用远端接口，还需 --endpoint。排队成功不等于模型已读。";
   } else {
-    const identity = /^[\p{L}\p{N}_.-]+$/u.test(p.name) ? p.name : p.id;
-    const urlOption =
-      location.origin === "http://127.0.0.1:4317"
-        ? ""
-        : ` --url ${location.origin}`;
-    connectionCommand =
-      p.kind === "codex"
-        ? `mailbox connect codex --as ${identity}${urlOption}`
-        : `node "${setup.cli}" --url ${location.origin} inbox --as ${p.id}\nnode "${setup.cli}" --url ${location.origin} read ${selected}`;
+    connectionCommand = `node "${setup.cli}" --url ${location.origin} inbox --as ${p.id}`;
     $("#connect-description").textContent =
-      p.kind === "codex"
-        ? "在普通终端执行这一条命令，再按序号选择已有会话。程序自动启动连接进程，不需要填写端口或会话 ID。"
-        : "让已有会话使用 CLI 读信和回信。此方式需要会话主动查收。";
+      "让已有会话使用 CLI 主动读信和回信。";
     $("#connect-footnote").textContent =
-      p.kind === "codex"
-        ? "先退出要恢复的原会话，避免两端同时写入。连接后从网页发定向消息即可；Ctrl+C 停止。若原 App Server 已开放接口，也可用 --endpoint 接入该服务。"
-        : "可使用 mailbox wait 等待新消息；它不能唤醒已经结束的轮次。";
+      "普通 CLI 读信不会自动唤醒已结束的轮次。";
   }
   $("#connect-command").textContent = connectionCommand;
   $("#connect-dialog").showModal();

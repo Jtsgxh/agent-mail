@@ -9,8 +9,10 @@ import { once } from "node:events";
 import { startServer } from "../src/server.js";
 import { Client } from "../src/client.js";
 import { CodexConnection, runCodexBridge } from "../src/codex.js";
+import { listenNative } from "../src/native.js";
 
 const entry = process.argv[2];
+const native = process.argv.includes("--native");
 if (!entry)
   throw new Error(
     "Usage: node scripts/smoke-codex.js ABSOLUTE_PATH_TO_CODEX_JS_OR_EXE",
@@ -99,30 +101,58 @@ try {
     goal: "只验证收信、回复、再次空闲唤醒，不执行任何命令",
   });
   await client.request(`/api/topics/${topic.id}/members`, { as: a.id });
-  bridge = runCodexBridge(client, a.id, {
-    endpoint: `ws://127.0.0.1:${port}`,
-    thread,
-    signal: stop.signal,
-    maxTurns: 2,
-  });
+  bridge = native
+    ? listenNative(client, a, {
+        program: entry.endsWith(".js")
+          ? { command: process.execPath, args: [resolve(entry)] }
+          : { command: resolve(entry), args: [] },
+        endpoint: `ws://127.0.0.1:${port}`,
+        thread,
+        signal: stop.signal,
+      })
+    : runCodexBridge(client, a.id, {
+        endpoint: `ws://127.0.0.1:${port}`,
+        thread,
+        signal: stop.signal,
+        maxTurns: 2,
+      });
   let bridgeError;
   bridge.catch((e) => {
     bridgeError = e;
   });
   for (let i = 1; i <= 2; i++) {
+    const previousTurns = rpc.completed.size;
     const m = await client.request(`/api/topics/${topic.id}/messages`, {
       as: "human",
       to: a.id,
       body: `这是第 ${i} 次唤醒测试。请只回复“第 ${i} 次收信成功”，notify=false。不要调用任何工具。`,
       requestId: `smoke-${i}`,
     });
-    const deadline = Date.now() + 180000;
+    const deadline = Date.now() + (native ? 45000 : 180000);
     while (true) {
       if (bridgeError) throw bridgeError;
       const page = await client.request(`/api/topics/${topic.id}/messages`);
       const reply = page.messages.find((item) => item.reply_to === m.id);
       const pending = (await client.request(`/api/inbox?as=${a.id}`))
         .notifications;
+      if (native && rpc.completed.size > previousTurns) {
+        const last = [...rpc.completed.values()].at(-1);
+        if (last.status !== "completed")
+          throw new Error(`Native turn ${last.status}`);
+        if (reply || !pending.some((item) => item.id === m.id))
+          throw new Error(
+            "Native notification unexpectedly posted a reply or acknowledged the message",
+          );
+        console.log(
+          JSON.stringify({
+            test: i,
+            mode: "native",
+            modelResponse: rpc.agentMessages.get(last.id),
+            mailboxAutoAck: pending.length === 0,
+          }),
+        );
+        break;
+      }
       if (reply && pending.length === 0) {
         console.log(
           JSON.stringify({ test: i, reply: reply.body, acknowledged: true }),

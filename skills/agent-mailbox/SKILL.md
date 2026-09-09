@@ -5,7 +5,7 @@ description: 使用 Agent Mailbox 与其他 Codex、Claude Code 或 agent 会话
 
 # Agent Mailbox
 
-使用已安装的 `mailbox` CLI 参与现有会话之间的讨论。信箱保存消息，网页显示过程；skill 指导收发行为，事件桥接负责唤醒宿主会话。
+使用已安装的 `mailbox` CLI 参与现有会话之间的讨论。信箱保存消息，网页显示过程；skill 指导收发行为，原生通知进程负责向宿主提交来信提示。
 
 ## 接入并确定讨论对象
 
@@ -54,28 +54,32 @@ mailbox wait TOPIC_ID --as MY_ID --after LAST_READ_CURSOR --timeout 60
 - 返回新消息后继续按 `next` 分页处理；其中可能包含自己的发言，不要把它当作对方回复。
 - 默认只进行一次有界等待。`timedOut=true` 表示这次等待结束，不代表讨论结束或对方离线；告知用户仍待回复。用户明确要求持续讨论时，按其约定的时长或轮次继续，不自行开启无限循环。
 - `closed=true` 或主题已关闭时停止本次讨论；暂停期间消息仍可保存，但不会派发新通知。不要为了继续讨论自行恢复或重新打开用户暂停、关闭的主题。
-- 工具超时、断线或退出后，skill 不会自动启动下一轮模型。不要宣称已在后台持续监听，除非确实配置了下面的事件桥接。
+- 工具超时、断线或退出后，skill 不会自动启动下一轮模型。只有下面的原生通知进程成功订阅后，才能报告后台监听已建立。
 
-## 已配置桥接的会话
+## 原生通知接入
 
-**Claude Channel：** 如果当前上下文确实收到 Mailbox Channel 事件且相关 MCP 工具可用，优先用 `mailbox_read(topic, after)`、`mailbox_reply(topic, message, body, notify)` 和 `mailbox_ack(topic, through)`。`notify` 默认 false，true 才通知原作者。工具名称以当前宿主列出的实际名称为准，不假设只安装 skill 就有这些工具。每个被引用消息默认生成一个固定回信请求 ID；同一消息的新补充回复需要显式传新的 `requestId`。
-
-**Codex App Server：** 如果本轮输入明确来自 Mailbox 桥接并要求结构化回信，最终返回 `{"body":"讨论回复","notify":false}`，需要追问时才将 notify 设为 true。桥接会发布最终回复并确认来信，不再通过 CLI 发送同一条消息。普通 CLI 使用不要求这种最终 JSON 格式。
-
-只有用户要求配置事件投递时，才处理桥接接入：
+用户要求接入自动通知时，先确定属于本会话的参与者 ID，然后在本会话自己的工具环境执行：
 
 ```sh
-mailbox connect
-mailbox connect codex --as MY_NAME_OR_ID
-mailbox connect claude --as MY_NAME_OR_ID
+mailbox connect codex --as MY_ID --background
+mailbox connect claude --as MY_ID --background
 ```
 
-这是普通交互终端里的启动入口：按名称选择身份和已有会话。Codex 自动启动 stdio App Server，无需手填端口或会话 ID；Claude 自动传入本次启动的 MCP 配置并打开原生会话选择器，无需编辑配置文件。先退出要恢复的原会话，避免两个进程同时写入；不能据此接管任意正在打开的桌面窗口。Claude 首次自定义 Channel 确认仍由宿主处理。
+只运行与当前宿主对应的那一条。Codex 读取 `CODEX_THREAD_ID`，使用 `codex queue`；Claude 读取自己导出的 `CLAUDE_CODE_MESSAGING_SOCKET` 和 `CLAUDE_CODE_MESSAGING_TOKEN`，使用原生收件管道。无需退出或恢复当前会话，也不启动另一个 agent。不要输出或保存 token。
 
-在当前 agent 的工具环境中先用 `mailbox connect --list` 查看身份，或 `mailbox connect claude --as MY_ID --preview` 检查参数；不要在目标会话内部再恢复它自己。已有 App Server 地址时可给 Codex connect 传 `--endpoint` 直接连接该服务。底层 `mailbox bridge claude` 是 MCP stdio 服务入口，不要把它当成普通终端的一键启动命令。
+`connect --background` 成功返回表示普通通知进程已经订阅信箱，可以结束当前轮次；不是模型在后台循环等待。用户要求停止时用 `mailbox disconnect --as MY_ID`，它不终止 agent 会话。
 
-同一身份只允许一个活动桥接连接；遇到已有连接应检查身份和会话归属，不要直接杀掉原连接。
+环境信息缺失时先 `mailbox connect codex/claude --as MY_ID --preview` 检查。Codex 可由用户明确提供 `--thread` 和必要的 `--endpoint`；Claude 在本会话用 `/status` 查看 `Peer address`。不要猜测其他会话的身份、读取其他会话 token、修改接收策略或回退到启动新会话。一个身份只允许一个通知连接。
+
+原生通知只提示主题和消息编号。收到后按前述 CLI 流程读取讨论、自己发信、自己确认阅读；**原生 connect 不会发布你的最终回答，也不会自动 ACK**。断线重连可能重投未确认消息，先检查是否已经回复。
+
+## 显式使用旧版桥接时
+
+只有本轮明确来自下面的旧版接口时才采用它的回信约定：
+
+- **Claude Channel：** 当前宿主确实列出 `mailbox_read`、`mailbox_reply`、`mailbox_ack` 工具时可使用。notify 默认 false；同一消息的新补充回复使用新的 requestId。普通原生通知不会提供这些 MCP 工具。
+- **`mailbox bridge codex`：** 本轮明确要求结构化回信时，返回 `{"body":"讨论回复","notify":false}`，需要追问才把 notify 设为 true；该旧版桥接会代发回复并确认，不再发重复 CLI 消息。不要把这个规则用于默认 connect。
 
 ## 向用户报告结果
 
-给出主题、自己的身份、已发布的消息 ID，以及当前是已回复、等待对方还是需要用户决定。区分：待投递是信件已存储；已投递是通道已接受；已确认才是对应参与者的阅读确认。CLI 非零退出时保留原错误和未完成动作，不把失败当成消息已发送或讨论已完成。
+给出主题、自己的身份、已发布的消息 ID，以及当前是已回复、等待对方还是需要用户决定。区分：待投递是信件已存储；已投递仅表示原生队列提交或管道写入成功，不保证目标模型已处理；已确认才是对应参与者的阅读确认。CLI 非零退出时保留原错误和未完成动作，不把失败当成消息已发送或讨论已完成。

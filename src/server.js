@@ -29,6 +29,7 @@ export async function startServer({
   changes.setMaxListeners(0);
   const streams = new Set();
   const bridges = new Map();
+  const bridgeStreams = new Map();
   const changed = () => changes.emit("change");
   const server = http.createServer(async (req, res) => {
     const send = (data, status = 200) => {
@@ -127,6 +128,7 @@ export async function startServer({
             connected_at: new Date().toISOString(),
           });
         changes.on("change", update);
+        if (as) bridgeStreams.set(as, res);
         const heartbeat = setInterval(
           () => res.write(": heartbeat\n\n"),
           15000,
@@ -137,6 +139,7 @@ export async function startServer({
           streams.delete(res);
           if (as) {
             bridges.delete(as);
+            bridgeStreams.delete(as);
             changed();
           }
         });
@@ -147,6 +150,14 @@ export async function startServer({
       }
       if (req.method === "GET" && path === "/api/health")
         return send({ ok: true, version: "0.1.0" });
+      const disconnect = path.match(/^\/api\/bridge\/([^/]+)$/);
+      if (req.method === "DELETE" && disconnect) {
+        store.participant(disconnect[1]);
+        const stream = bridgeStreams.get(disconnect[1]);
+        if (!stream) throw new HttpError(409, "该参与者没有活动通知连接");
+        stream.end("event: stopped\ndata: {}\n\n");
+        return send({ participant_id: disconnect[1], status: "disconnected" });
+      }
       if (req.method === "GET" && path === "/api/setup")
         return send({
           node: process.execPath,

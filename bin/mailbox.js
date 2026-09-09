@@ -7,8 +7,11 @@ import { Client } from "../src/client.js";
 const help = `Agent Mailbox · 本机主题讨论信箱
 
 mailbox connect [codex|claude] [--as 名称或ID]
+mailbox connect codex --as NAME --thread SESSION_ID --background
+mailbox connect claude --as NAME --background
 mailbox connect codex --as NAME --list
 mailbox connect claude --as NAME --preview
+mailbox disconnect --as NAME
 
 mailbox participant create --name NAME [--kind codex|claude|agent]
 mailbox participant list
@@ -29,8 +32,9 @@ mailbox codex threads --endpoint ws://127.0.0.1:4500
 所有普通命令输出 JSON；--json 可显式声明。失败输出 stderr，退出码 1。
 --url 或 MAILBOX_URL 指定信箱，默认 http://127.0.0.1:4317。
 --request-id 复用同一发信请求 ID 可防止重复写入。桥接不会自动重连。
-connect 在普通终端选择已有会话；--cwd 指定原项目，--thread 可跳过会话选择。
---agent-bin 指定本机程序；--list 查看，--preview 只检查参数。
+connect 在目标 agent 会话内部执行，使用自身原生消息入口；--background 仅后台运行通知进程。
+Codex 使用 CODEX_THREAD_ID 或 --thread；Claude 使用自身导出的消息地址和 token。
+--agent-bin 指定 Codex 程序；--list 查看参与者，--preview 只检查参数。
 Codex token 如有需要通过 MAILBOX_CODEX_TOKEN 环境变量提供。`;
 
 const controller = new AbortController();
@@ -43,6 +47,7 @@ try {
     options: {
       list: { type: "boolean" },
       preview: { type: "boolean" },
+      background: { type: "boolean" },
       help: { type: "boolean", short: "h" },
       json: { type: "boolean" },
       stdin: { type: "boolean" },
@@ -68,8 +73,7 @@ try {
           "max-turns",
           "max-messages",
           "agent-bin",
-          "cwd",
-          "cursor",
+          "socket",
         ].map((k) => [k, { type: "string" }]),
       ),
     },
@@ -115,24 +119,24 @@ try {
   let result;
   if (p[0] === "connect") {
     const { connectMailbox } = await import("../src/connect.js");
-    const maxTurns = int("max-turns", 12),
-      maxMessages = int("max-messages", 20);
-    if (maxTurns < 1 || maxMessages < 1)
-      throw new Error("消息/轮次上限必须大于 0");
+    const maxMessages = int("max-messages", 20);
+    if (maxMessages < 1) throw new Error("消息上限必须大于 0");
     result = await connectMailbox(client, {
       kind: p[1],
       as: v.as,
       thread: v.thread,
       endpoint: v.endpoint,
-      cwd: v.cwd,
       agentBin: v["agent-bin"],
       list: v.list,
       preview: v.preview,
-      cursor: v.cursor,
       signal: controller.signal,
-      maxTurns,
       maxMessages,
+      background: v.background,
+      socket: v.socket,
     });
+  } else if (p[0] === "disconnect") {
+    const { disconnectMailbox } = await import("../src/connect.js");
+    result = await disconnectMailbox(client, requireValue("as"));
   } else if (p[0] === "participant" && p[1] === "create")
     result = await client.request("/api/participants", {
       name: requireValue("name"),
@@ -247,6 +251,8 @@ try {
   } else throw new Error("未知命令，运行 mailbox --help 查看用法");
   if (result !== undefined) console.log(JSON.stringify(result, null, 2));
 } catch (e) {
+  if (process.connected && process.send)
+    process.send({ type: "error", error: e.message });
   console.error(JSON.stringify({ error: e.message }));
   process.exitCode = controller.signal.aborted ? 130 : 1;
 }
