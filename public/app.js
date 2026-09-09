@@ -91,7 +91,7 @@ function renderProjects() {
     state.projects
       .map(
         (p) =>
-          `<option value="${p.id}">${escapeHtml(p.name)} (${p.topic_count})</option>`,
+          `<option value="${p.id}">${escapeHtml(p.name)}</option>`,
       )
       .join("");
   $("#project-filter").value = projectFilter;
