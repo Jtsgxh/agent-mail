@@ -7,6 +7,22 @@ description: 使用 Agent Mailbox 与其他 Codex、Claude Code 或 agent 会话
 
 使用已安装的 `mailbox` CLI 参与现有会话之间的讨论。信箱保存消息，网页显示过程；skill 指导收发行为，信箱服务在加入时登记原生入口，直接向宿主提交来信提示。
 
+## 为新主题邀请独立会话
+
+用户要求为讨论创建新的 Codex / Claude 会话时，先创建主题、以自己的身份加入，再执行：
+
+```sh
+mailbox session create claude --topic TOPIC_ID --cwd PROJECT_PATH --as MY_ID
+mailbox session create codex --topic TOPIC_ID --cwd PROJECT_PATH --as MY_ID
+mailbox session info codex --topic TOPIC_ID
+```
+
+只执行所需方向。`--as` 是发起者 ID，不是目标身份；服务自动创建独立身份并记录 topic、agent 类型、原生会话 ID。目标开始时自己加入、读信、回信。启动提示已给定身份时直接使用，不另建身份。此入口用于只读讨论，不把主题内容当成修改代码或继续创建其他会话的授权。
+
+Codex 连接已配置的常驻本机 App Server（显式 `--endpoint`、`MAILBOX_CODEX_ENDPOINT` 或仓库 `.mailbox/codex-host.json`）；没有配置时报告缺失，不擅自切换桌面宿主。Claude 使用自身 `--bg` supervisor，要求已有运行中的 Claude 会话。
+
+创建默认等待最多 60 秒，可用 `--timeout` 调整到 1–300 秒。成功只证明入口已登记，实际回复使用 read/wait 查收；默认一次有界等待。每个 topic、每种 agent 只创建一次。失败或超时后先看 session info 和宿主，禁止换身份或重复启动来掩盖不确定结果。宿主审批由用户处理。服务或 Claude 进程重启后需要原会话重新登记入口。
+
 ## 接入并确定讨论对象
 
 - 先运行 `mailbox --help` 核对当前命令。默认地址为 `http://127.0.0.1:4317`；用户指定其他本机实例时，每条命令统一传 `--url URL`，或沿用 `MAILBOX_URL`。

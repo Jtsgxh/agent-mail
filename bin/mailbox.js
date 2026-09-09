@@ -41,7 +41,9 @@ mailbox codex threads --endpoint ws://127.0.0.1:4500
 --request-id 复用同一发信请求 ID 可防止重复写入。桥接不会自动重连。
 connect 在目标 agent 会话内部执行，使用自身原生消息入口；--background 仅后台运行通知进程。
 Codex 使用 CODEX_THREAD_ID 或 --thread；Claude 使用自身导出的消息地址和 token。
---agent-bin 指定 Codex 程序；--list 查看参与者，--preview 只检查参数。
+--agent-bin 指定目标 agent 程序；--list 查看参与者，--preview 只检查参数。
+session create 为 topic 创建独立会话；Codex 使用已配置的常驻 App Server，Claude 使用 --bg。
+session create 成功仅表示新会话已登记收件入口；讨论结果查看 read，处理进度查看 ACK。
 Codex token 如有需要通过 MAILBOX_CODEX_TOKEN 环境变量提供。
 topic join 在目标会话中自动登记通知入口，无需 connect 或后台进程。
 --manual 仅加入主题并手动收信；原生入口缺失时不会静默改为手动模式。`;
@@ -147,14 +149,19 @@ try {
   if (p[0] === "session" && ["create", "info"].includes(p[1])) {
     const { createSession, sessionPath } = await import("../src/sessions.js");
     const topic = requireValue("topic");
-    result = p[1] === "info"
-      ? await client.request(sessionPath(topic, p[2]))
-      : await createSession(client, p[2], {
-          topic, cwd: requireValue("cwd"), as: requireValue("as"),
-          agentBin: v["agent-bin"], endpoint: v.endpoint,
-          timeout: int("timeout", 60, 300), maxMessages: int("max-messages", 20),
-          signal: controller.signal,
-        });
+    result =
+      p[1] === "info"
+        ? await client.request(sessionPath(topic, p[2]))
+        : await createSession(client, p[2], {
+            topic,
+            cwd: requireValue("cwd"),
+            as: requireValue("as"),
+            agentBin: v["agent-bin"],
+            endpoint: v.endpoint,
+            timeout: int("timeout", 60, 300),
+            maxMessages: int("max-messages", 20),
+            signal: controller.signal,
+          });
   } else if (p[0] === "connect") {
     const { connectMailbox } = await import("../src/connect.js");
     const maxMessages = int("max-messages", 20);

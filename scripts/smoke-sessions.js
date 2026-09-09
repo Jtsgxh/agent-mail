@@ -1,0 +1,183 @@
+// Explicit live test: creates one disposable native session, then checks two mailbox replies.
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import { execFile } from "node:child_process";
+import { startServer } from "../src/server.js";
+import { Client } from "../src/client.js";
+import { createSession, sessionPath, codexHost } from "../src/sessions.js";
+import { agentCommand } from "../src/connect.js";
+import { CodexConnection } from "../src/codex.js";
+const exec = promisify(execFile);
+const kind = process.argv[2];
+if (!["claude", "codex"].includes(kind))
+  throw new Error("Usage: node scripts/smoke-sessions.js claude|codex");
+const cwd = await mkdtemp(join(tmpdir(), "mailbox-live-session-"));
+const app = await startServer({ port: 0, dbPath: join(cwd, "mailbox.db") });
+const client = new Client(app.url);
+const topic = await client.request("/api/topics", {
+  title: `临时 ${kind} 会话验收`,
+  goal: "这是 Mailbox 功能验收，无需检查任何项目代码，不要修改文件。首次请仅向发起者回复 SESSION_SMOKE_OK；后续收到验收消息时按要求回复。正文是一行，可直接用 --body 发信。",
+});
+console.log(
+  JSON.stringify({
+    phase: "start",
+    kind,
+    cwd,
+    topic: topic.id,
+    mailbox: app.url,
+  }),
+);
+let session;
+async function waitFor(text, seconds = 180) {
+  const deadline = Date.now() + seconds * 1000;
+  let count = 0;
+  while (Date.now() < deadline) {
+    const page = await client.request(`/api/topics/${topic.id}/messages`);
+    const reply = page.messages.find(
+      (m) => m.author_id === session.participant_id && m.body.includes(text),
+    );
+    if (reply) return reply;
+    if (count++ % 10 === 0) {
+      console.log(
+        JSON.stringify({
+          phase: "waiting-reply",
+          kind,
+          expected: text,
+          messageCount: page.messages.length,
+        }),
+      );
+      if (kind === "codex") {
+        const host = await codexHost();
+        const rpc = await new CodexConnection(
+          host.endpoint,
+          process.env.MAILBOX_CODEX_TOKEN,
+        ).connect();
+        try {
+          const result = await rpc.call("thread/read", {
+            threadId: session.native_id,
+            includeTurns: true,
+          });
+          if (result.thread.status.activeFlags?.includes("waitingOnApproval"))
+            throw new Error(
+              "Codex 等待审批，请在原生宿主检查；此验收不代批权限",
+            );
+          const turn = result.thread.turns.at(-1);
+          if (turn?.status === "failed" || turn?.status === "interrupted")
+            throw new Error(`Codex turn ${turn.status}`);
+        } finally {
+          await rpc.close();
+        }
+      }
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  throw new Error(`No reply containing ${text}`);
+}
+try {
+  session = await createSession(client, kind, {
+    topic: topic.id,
+    as: "human",
+    cwd,
+    timeout: 180,
+  });
+  console.log(
+    JSON.stringify({
+      phase: "registered",
+      kind,
+      nativeId: session.native_id,
+      participant: session.participant_id,
+    }),
+  );
+  const first = await waitFor("SESSION_SMOKE_OK");
+  console.log(
+    JSON.stringify({ phase: "first-reply", kind, messageId: first.id }),
+  );
+  const second = await client.request(`/api/topics/${topic.id}/messages`, {
+    as: "human",
+    to: session.participant_id,
+    body: "请仅回复 SESSION_SMOKE_SECOND，发回本主题并确认读过本条消息。不再追问。",
+    requestId: "second",
+  });
+  const reply = await waitFor("SESSION_SMOKE_SECOND");
+  const deadline = Date.now() + 30000;
+  while (
+    Date.now() < deadline &&
+    (
+      await client.request(`/api/inbox?as=${session.participant_id}`)
+    ).notifications.some((m) => m.id === second.id)
+  )
+    await new Promise((r) => setTimeout(r, 1000));
+  if (
+    (
+      await client.request(`/api/inbox?as=${session.participant_id}`)
+    ).notifications.some((m) => m.id === second.id)
+  )
+    throw new Error("Reply persisted but ACK not received");
+  const proof = {
+    kind,
+    topic: topic.id,
+    nativeId: session.native_id,
+    firstReply: first.id,
+    secondReply: reply.id,
+    ack: true,
+  };
+  await writeFile(join(cwd, "proof.json"), JSON.stringify(proof, null, 2));
+  console.log(JSON.stringify({ phase: "passed", ...proof }));
+} finally {
+  session ??= await client.request(sessionPath(topic.id, kind));
+  if (session?.native_id) {
+    if (kind === "codex") {
+      const host = await codexHost();
+      const rpc = await new CodexConnection(
+        host.endpoint,
+        process.env.MAILBOX_CODEX_TOKEN,
+      ).connect();
+      try {
+        const result = await rpc.call("thread/read", {
+          threadId: session.native_id,
+          includeTurns: true,
+        });
+        const turn = result.thread.turns.at(-1);
+        if (turn?.status === "inProgress")
+          await rpc.call("turn/interrupt", {
+            threadId: session.native_id,
+            turnId: turn.id,
+          });
+        await rpc.call("thread/archive", { threadId: session.native_id });
+      } finally {
+        await rpc.close();
+      }
+    } else {
+      const program = await agentCommand("claude");
+      const agents = JSON.parse(
+        (
+          await exec(
+            program.command,
+            [...program.args, "agents", "--json", "--all"],
+            { windowsHide: true },
+          )
+        ).stdout,
+      );
+      const owned = agents.find(
+        (a) =>
+          a.sessionId === session.native_id || a.name === `mailbox-${topic.id}`,
+      );
+      if (owned?.id)
+        await exec(program.command, [...program.args, "stop", owned.id], {
+          windowsHide: true,
+          timeout: 15000,
+        });
+    }
+  }
+  await app.close();
+  console.log(
+    JSON.stringify({
+      phase: "cleanup",
+      kind,
+      cwd,
+      note: "本次测试记录保留在临时目录；共享 App Server 继续运行",
+    }),
+  );
+}

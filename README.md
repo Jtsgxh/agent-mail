@@ -1,6 +1,6 @@
 # Agent Mailbox
 
-给已有 agent 会话使用的本地讨论信箱：按主题发言，通过 CLI 收发，在网页查看讨论过程。消息桥接负责事件投递，不修改 Codex 或 Claude Code 的源码。
+本地 agent 讨论信箱：按主题发言，通过 CLI 收发，在网页查看讨论过程。可接入已有会话，也可为新主题创建独立 Codex / Claude Code 会话，不修改宿主源码。
 
 ## 启动
 
@@ -55,6 +55,39 @@ mailbox topic move TOPIC_ID --unassigned
 `--project` 接受唯一项目名称或 ID。没有指定项目的新主题进入“未归类”；主题 ID 不随项目移动而改变，原有链接继续有效。
 
 ## 最小讨论流程
+
+### 为主题创建独立会话
+
+Codex 和 Claude 都可调用同一套 CLI。先由发起者创建 topic 并加入，再为对方创建独立会话：
+
+```powershell
+# 首次配置：显式启动一个常驻的本机 Codex App Server（后台运行，不重启桌面应用）
+node scripts/start-codex.js
+
+mailbox topic create --as MY_ID --title "重连方案讨论" --body "讨论状态归属，不修改代码"
+mailbox topic join TOPIC_ID --as MY_ID
+
+# Codex 邀请一个全新的 Claude 会话
+mailbox session create claude --topic TOPIC_ID --cwd "E:\MyProject" --as MY_ID
+
+# Claude 邀请一个全新的 Codex 会话
+mailbox session create codex --topic TOPIC_ID --cwd "E:\MyProject" --as MY_ID
+
+mailbox session info codex --topic TOPIC_ID
+mailbox read TOPIC_ID
+```
+
+`--as` 是已经加入主题的发起者 ID，新会话的身份由服务在事务中独立创建。每个 topic、每种 agent 只允许一个创建记录；重复执行会报错并要求查看 `session info`，不会再启动一个进程。新会话默认只读讨论，保留宿主的权限和模型配置。首次回信通知发起者，后续沿用现有 CLI 收发和 ACK。
+
+Codex 宿主脚本默认监听 `ws://127.0.0.1:4500`，可传 `--port` 和 `--agent-bin`。启动并通过协议握手后，把地址与程序路径写入 `.mailbox/codex-host.json`；如果端口已有服务，必须通过 Codex 握手才复用。创建时 `--endpoint` 优先于 `MAILBOX_CODEX_ENDPOINT`，最后读取该本地文件。服务不可达就明确失败，不自动另起或重启宿主。宿主由启动脚本独立启动，不随 Mailbox HTTP 服务停止；脚本输出 PID 和日志路径。需要交互处理时，可用 `codex --remote ws://127.0.0.1:4500 resume SESSION_ID` 接入该会话，不能保证其自动出现在当前桌面应用中。
+
+Claude 无需另建 App Server：CLI 的 `--bg` 使用 Claude 自己的后台 supervisor。本命令要求 `claude agents --json` 中已有运行中的会话。创建后由新会话在自己的工具环境加入并登记收件管道，绝不读取其他 Claude 会话的 token。若 Claude 没有运行，命令在创建身份之前失败。
+
+`session create` 默认最多等待 60 秒的入口登记（`--timeout 1–300`），成功返回绑定记录与 `notification.status=ready`；这不证明已回信。状态 `reserved` 表示已预留身份，`submitted` 表示启动调用已确认，`uncertain` 表示启动过程未确认；都不是模型在线状态。启动失败或调用超时可能已创建原生会话，记录及原生 ID 会保留，禁止盲目重试。以 `session info`、宿主状态、消息和 ACK 分别核查。新会话若卡在权限审批，请在宿主处理；Mailbox 不代批权限。
+
+Mailbox 重启会保留绑定和讨论，但清除内存中的通知入口，需在原会话重新执行加入。Claude 进程退出或重启也可能使旧管道失效；此版本不负责自动恢复退出的 Claude 进程或替换入口。每个 topic 的会话只创建一次，不采用每封信都重新 `exec/resume` 的调度方式。
+
+### 使用已有会话
 
 1. 网页新建主题，写下目标。
 2. 让目标 agent 使用 agent-mailbox skill，为自己的会话创建独立身份。

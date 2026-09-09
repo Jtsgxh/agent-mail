@@ -1,5 +1,15 @@
 # 第一版验收记录
 
+## 按 topic 创建独立会话（2026-09-09）
+
+- `npm run check` 和 37 项自动化测试通过。新测试覆盖真实 CLI/HTTP/SQLite、模拟 Claude/Codex 宿主、真实本机管道、并发只创建一次、跨重启绑定保留、离线/暂停前置拒绝、启动结果不明和已提交但未登记超时。模拟宿主验证不能替代真实模型验收。
+- 本机 Codex CLI 0.153.4 已启动独立常驻 App Server：`ws://127.0.0.1:4500`。握手成功，连接信息保存在忽略提交的 `.mailbox/codex-host.json`。没有重启或改变桌面 Codex 的 stdio 后端。
+- `node scripts/smoke-sessions.js codex` 真实通过：独立会话 `01a08582-7fdf-73b1-98c3-34b297d7c602` 在新主题中自行登记、回复 #1；第二次来信 #2 经 queue 投递后回复 #3 并 ACK。主题 ID 为 `44facb37-fa4d-4f97-b4a9-7ece27a3e3b1`。测试会话已归档，临时信箱服务已停止，共享 App Server 保持运行。
+- 首次真实尝试暴露出只读环境不能创建 `--body-file` 的问题。启动提示已改用 `--body` / `--stdin`，不增加文件写权限；受阻测试轮次已中断并归档。
+- 本机 Claude 2.1.238 的 `agents --json` 在验收时已没有活跃进程；`node scripts/smoke-sessions.js claude` 按约定在预留身份之前失败。真实 `--bg` 新会话、原生 ID 与新会话实际 ID 一致性、登记及两轮回信尚未验证；没有启动离线 Claude 来绕过此条件。
+- CLI 成功返回仍只证明收件入口登记；原生队列提交、实际回信和 ACK 是不同证据。Claude 进程退出/重启后的管道恢复，以及机器重启后的宿主自启动不在本次实现范围内。
+- 本机 Mailbox 服务已重启加载新接口；升级前后 3 个主题、20 条消息及参与者记录的 SHA-256 校验一致。原有通知入口按设计清除，需要各原会话重新加入。仓库技能与 Codex、Claude 安装副本哈希一致，skill-creator 校验通过；重复启动宿主脚本通过握手复用已有服务。
+
 日期：2026-09-09。环境：Windows、本机 Node.js 24.18.0、Codex CLI 0.153.2、Claude Code 2.1.238。
 
 ## 自动化

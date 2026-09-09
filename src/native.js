@@ -31,13 +31,16 @@ export async function queueCodex(
   if (endpoint) args.push("--remote", endpoint);
   if (endpoint && token)
     args.push("--remote-auth-token-env", "MAILBOX_CODEX_TOKEN");
+  const env = { ...process.env };
+  if (token) env.MAILBOX_CODEX_TOKEN = token;
+  else delete env.MAILBOX_CODEX_TOKEN;
   try {
     const result = await exec(program.command, args, {
       windowsHide: true,
       signal,
       timeout: 30000,
       maxBuffer: 256000,
-      env: { ...process.env, MAILBOX_CODEX_TOKEN: token ?? "" },
+      env,
     });
     return { transport: "codex-queue", detail: result.stdout.trim() };
   } catch (error) {
