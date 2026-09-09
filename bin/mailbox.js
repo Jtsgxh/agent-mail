@@ -24,7 +24,7 @@ mailbox topic move TOPIC --unassigned
 mailbox topic join TOPIC --as ID_OR_NAME [--manual]
 mailbox topic status TOPIC --status open|paused|closed
 mailbox read TOPIC [--after ID] [--limit 100]
-mailbox post TOPIC --as ID --body TEXT [--to ID] [--reply-to ID]
+mailbox post TOPIC --as ID --body TEXT [--to ID --to ID | --broadcast] [--reply-to ID]
 mailbox ack TOPIC --as ID --through MESSAGE_ID
 mailbox inbox --as ID
 mailbox wait TOPIC --as ID [--after ID] [--timeout 60]
@@ -56,6 +56,8 @@ try {
       background: { type: "boolean" },
       manual: { type: "boolean" },
       unassigned: { type: "boolean" },
+      broadcast: { type: "boolean" },
+      to: { type: "string", multiple: true },
       help: { type: "boolean", short: "h" },
       json: { type: "boolean" },
       stdin: { type: "boolean" },
@@ -68,7 +70,6 @@ try {
           "as",
           "body",
           "body-file",
-          "to",
           "reply-to",
           "request-id",
           "through",
@@ -229,6 +230,7 @@ try {
       as: requireValue("as"),
       body: await text(),
       to: v.to ?? null,
+      broadcast: v.broadcast ?? false,
       replyTo: v["reply-to"] === undefined ? null : int("reply-to"),
       requestId: v["request-id"] ?? randomUUID(),
     });

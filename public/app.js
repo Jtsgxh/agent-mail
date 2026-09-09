@@ -88,10 +88,7 @@ function renderProjects() {
   $("#project-filter").innerHTML =
     '<option value="all">全部项目</option><option value="unassigned">未归类</option>' +
     state.projects
-      .map(
-        (p) =>
-          `<option value="${p.id}">${escapeHtml(p.name)}</option>`,
-      )
+      .map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`)
       .join("");
   $("#project-filter").value = projectFilter;
 }
@@ -124,9 +121,7 @@ function renderDetails() {
     if (p.kind === "human") return "";
     const route = state.recipients.find((r) => r.participant_id === p.id);
     if (route)
-      return route.status === "ready"
-        ? ""
-        : "! 通知失败，重新加入可重试";
+      return route.status === "ready" ? "" : "! 通知失败，重新加入可重试";
     if (state.bridges.some((b) => b.participant_id === p.id))
       return "● 旧版通知进程在线";
     return ["codex", "claude"].includes(p.kind) ? "" : "手动收信";
@@ -144,20 +139,56 @@ function renderDetails() {
   $("#existing-participant").innerHTML = outsiders
     .map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`)
     .join("");
-  const old = $("#recipient").value;
-  $("#recipient").innerHTML =
-    '<option value="">不通知 · 仅记录</option>' +
-    current.members
-      .filter((p) => p.id !== "human")
-      .map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`)
-      .join("");
-  if (current.members.some((p) => p.id === old)) $("#recipient").value = old;
+  renderRecipients();
   $("#pause-topic").textContent =
     current.status === "paused" ? "恢复通知" : "暂停通知";
   $("#pause-topic").disabled = current.status === "closed";
   $("#close-topic").textContent =
     current.status === "closed" ? "重新打开" : "关闭主题";
 }
+function notificationSelection() {
+  const broadcast = $("#broadcast").checked;
+  const to = broadcast
+    ? []
+    : [...document.querySelectorAll("#recipient-list input:checked")]
+        .map((input) => input.value)
+        .sort();
+  return { to, broadcast };
+}
+function updateRecipientSummary() {
+  const selection = notificationSelection();
+  $("#recipient-summary").textContent = selection.broadcast
+    ? "广播给所有其他参与者"
+    : selection.to.length
+      ? selection.to
+          .map((id) => current.members.find((p) => p.id === id).name)
+          .join("、")
+      : "不通知 · 仅记录";
+  document.querySelectorAll("#recipient-list input").forEach((input) => {
+    input.disabled = selection.broadcast;
+  });
+}
+function renderRecipients(selection = notificationSelection()) {
+  $("#broadcast").checked = selection.broadcast;
+  $("#recipient-list").innerHTML = (current?.members ?? [])
+    .filter((p) => p.id !== "human")
+    .map(
+      (p) =>
+        `<label><input type="checkbox" value="${p.id}" ${selection.to.includes(p.id) ? "checked" : ""} />${escapeHtml(p.name)}</label>`,
+    )
+    .join("");
+  updateRecipientSummary();
+}
+$("#recipient-picker").onchange = updateRecipientSummary;
+$("#clear-recipients").onclick = () =>
+  renderRecipients({ to: [], broadcast: false });
+document.addEventListener("click", (event) => {
+  if (!$("#recipient-picker").contains(event.target))
+    $("#recipient-picker").open = false;
+});
+$("#recipient-picker").onkeydown = (event) => {
+  if (event.key === "Escape") $("#recipient-picker").open = false;
+};
 function renderMessages() {
   const area = $("#message-area");
   const nearBottom =
@@ -165,15 +196,18 @@ function renderMessages() {
   $("#messages").innerHTML =
     messages
       .map((m) => {
-        const delivery = !m.to_id
-          ? ""
-          : m.ack_at
-            ? '<span><i class="status-dot ack"></i>已确认</span>'
-            : m.error
-              ? `<span class="delivery-error" title="${escapeHtml(m.error)}">投递失败</span>`
-              : m.notified_at
-                ? '<span><i class="status-dot sent"></i>已投递</span>'
-                : '<span><i class="status-dot pending"></i>待投递</span>';
+        const delivery = m.recipients
+          .map((recipient) => {
+            const status = recipient.ack_at
+              ? "已确认"
+              : recipient.error
+                ? "投递失败"
+                : recipient.notified_at
+                  ? "已投递"
+                  : "待投递";
+            return `<span class="recipient-delivery ${recipient.error && !recipient.ack_at ? "delivery-error" : ""}" title="${escapeHtml(recipient.error ?? "")}">→ ${escapeHtml(recipient.recipient_name)} · ${status}</span>`;
+          })
+          .join("");
         const safe = DOMPurify.sanitize(
           marked.parse(m.body, { breaks: true }),
           {
@@ -181,7 +215,7 @@ function renderMessages() {
             FORBID_ATTR: ["style"],
           },
         );
-        return `<article class="message" id="message-${m.id}">${avatar({ kind: m.author_kind, name: m.author_name })}<div class="message-main"><div class="message-meta"><strong>${escapeHtml(m.author_name)}</strong><span class="kind-tag">${escapeHtml(m.author_kind.toUpperCase())}</span><time class="message-time">${date(m.created_at)}</time><span class="message-number">#${m.id}</span></div>${m.reply_to ? `<div class="reply-ref">↳ 回复 #${m.reply_to}</div>` : ""}<div class="message-body">${safe}</div><div class="message-footer">${m.to_id ? `<span>→ ${escapeHtml(m.to_name)}</span>` : ""}${delivery}<button class="text-button" data-reply="${m.id}">↩ 回复</button></div></div></article>`;
+        return `<article class="message" id="message-${m.id}">${avatar({ kind: m.author_kind, name: m.author_name })}<div class="message-main"><div class="message-meta"><strong>${escapeHtml(m.author_name)}</strong><span class="kind-tag">${escapeHtml(m.author_kind.toUpperCase())}</span><time class="message-time">${date(m.created_at)}</time><span class="message-number">#${m.id}</span></div>${m.reply_to ? `<div class="reply-ref">↳ 回复 #${m.reply_to}</div>` : ""}<div class="message-body">${safe}</div><div class="message-footer">${m.broadcast ? "<span>广播</span>" : ""}${delivery}<button class="text-button" data-reply="${m.id}">↩ 回复</button></div></div></article>`;
       })
       .join("") ||
     '<div class="empty-messages">主题已经准备好了。<br>发出第一条消息，让讨论开始。</div>';
@@ -235,7 +269,7 @@ async function selectTopic(id) {
   if (selected)
     drafts.set(selected, {
       body: $("#message-body").value,
-      recipient: $("#recipient").value,
+      notification: notificationSelection(),
       replyTo,
     });
   selected = id;
@@ -248,7 +282,8 @@ async function selectTopic(id) {
   $("#reply-banner").hidden = !replyTo;
   $("#reply-label").textContent = replyTo ? `引用消息 #${replyTo}` : "";
   await refresh();
-  if (draft?.recipient) $("#recipient").value = draft.recipient;
+  renderRecipients(draft?.notification ?? { to: [], broadcast: false });
+  $("#recipient-picker").open = false;
 }
 $("#new-topic").onclick = $("#first-topic").onclick = () => {
   $("#create-topic-project").innerHTML = projectOptions();
@@ -361,19 +396,20 @@ $("#composer").onsubmit = guard(async (e) => {
   const body = $("#message-body").value;
   if (!body.trim()) return;
   const id = selected,
-    to = $("#recipient").value || null,
+    notification = notificationSelection(),
     reference = replyTo;
-  const key = JSON.stringify({ id, body, to, reference });
+  const key = JSON.stringify({ id, body, ...notification, reference });
   if (pendingPost?.key !== key)
     pendingPost = { key, requestId: crypto.randomUUID() };
   sending = true;
+  $("#recipient-picker").open = false;
   $("#send-message").disabled = true;
   try {
     await api(`/topics/${id}/members`, { as: "human" });
     await api(`/topics/${id}/messages`, {
       as: "human",
       body,
-      to,
+      ...notification,
       replyTo: reference,
       requestId: pendingPost.requestId,
     });

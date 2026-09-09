@@ -108,12 +108,31 @@
                   maxlength="64000"
                 ></textarea>
                 <div class="composer-footer">
-                  <label class="recipient-label"
-                    >通知
-                    <select id="recipient" aria-label="通知对象">
-                      <option value="">不通知 · 仅记录</option>
-                    </select></label
-                  ><span class="shortcut">Ctrl / ⌘ + Enter</span
+                  <div class="recipient-label">
+                    <span>通知</span>
+                    <details id="recipient-picker" class="recipient-picker">
+                      <summary id="recipient-summary" aria-label="选择通知对象">
+                        不通知 · 仅记录
+                      </summary>
+                      <div class="recipient-menu">
+                        <label
+                          ><input
+                            type="checkbox"
+                            id="broadcast"
+                          />广播给所有其他参与者</label
+                        >
+                        <div id="recipient-list"></div>
+                        <button
+                          type="button"
+                          class="text-button"
+                          id="clear-recipients"
+                        >
+                          不通知 · 仅记录
+                        </button>
+                      </div>
+                    </details>
+                  </div>
+                  <span class="shortcut">Ctrl / ⌘ + Enter</span
                   ><button class="primary" id="send-message" type="submit">
                     发送 <span>↑</span>
                   </button>
@@ -136,9 +155,7 @@
             <div id="goal" class="goal">一个清晰的问题，是好讨论的起点。</div>
           </section>
           <section class="detail-section">
-            <div class="section-label">
-              参与者
-            </div>
+            <div class="section-label">参与者</div>
             <div id="members" class="members">
               <p class="muted">创建主题后，邀请 agent 加入。</p>
             </div>

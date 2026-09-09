@@ -54,15 +54,15 @@ export class Store {
       CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, topic_id TEXT NOT NULL REFERENCES topics(id),
         author_id TEXT NOT NULL REFERENCES participants(id), body TEXT NOT NULL,
-        reply_to INTEGER REFERENCES messages(id), to_id TEXT REFERENCES participants(id),
+        reply_to INTEGER REFERENCES messages(id), broadcast INTEGER NOT NULL DEFAULT 0,
         request_id TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
         UNIQUE(author_id, request_id)
       );
       CREATE INDEX IF NOT EXISTS messages_topic ON messages(topic_id, id);
       CREATE TABLE IF NOT EXISTS deliveries (
-        message_id INTEGER PRIMARY KEY REFERENCES messages(id), recipient_id TEXT NOT NULL REFERENCES participants(id),
-        notified_at TEXT, ack_at TEXT, error TEXT
+        message_id INTEGER NOT NULL REFERENCES messages(id), recipient_id TEXT NOT NULL REFERENCES participants(id),
+        notified_at TEXT, ack_at TEXT, error TEXT, PRIMARY KEY(message_id,recipient_id)
       );
       CREATE INDEX IF NOT EXISTS deliveries_recipient ON deliveries(recipient_id, message_id);
       INSERT OR IGNORE INTO participants(id,name,kind) VALUES ('human','我','human');
@@ -79,6 +79,36 @@ export class Store {
     this.db.exec(
       "CREATE INDEX IF NOT EXISTS topics_project ON topics(project_id)",
     );
+    // Preserve old per-message receipts while changing their key to message + recipient.
+    this.db.exec("BEGIN");
+    try {
+      if (
+        !this.db
+          .prepare("PRAGMA table_info(deliveries)")
+          .all()
+          .find((c) => c.name === "recipient_id").pk
+      ) {
+        this.db.exec(`ALTER TABLE deliveries RENAME TO deliveries_single;
+          CREATE TABLE deliveries (
+            message_id INTEGER NOT NULL REFERENCES messages(id), recipient_id TEXT NOT NULL REFERENCES participants(id),
+            notified_at TEXT, ack_at TEXT, error TEXT, PRIMARY KEY(message_id,recipient_id)
+          );
+          INSERT INTO deliveries SELECT message_id,recipient_id,notified_at,ack_at,error FROM deliveries_single;
+          DROP TABLE deliveries_single;
+          CREATE INDEX deliveries_recipient ON deliveries(recipient_id,message_id);`);
+      }
+      const columns = this.db.prepare("PRAGMA table_info(messages)").all();
+      if (!columns.some((c) => c.name === "broadcast"))
+        this.db.exec(
+          "ALTER TABLE messages ADD COLUMN broadcast INTEGER NOT NULL DEFAULT 0",
+        );
+      if (columns.some((c) => c.name === "to_id"))
+        this.db.exec("ALTER TABLE messages DROP COLUMN to_id");
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
   close() {
     this.db.close();
@@ -216,13 +246,30 @@ export class Store {
   message(id) {
     const m = this.db
       .prepare(
-        `SELECT m.*, p.name AS author_name, p.kind AS author_kind, r.name AS to_name,
-      d.notified_at,d.ack_at,d.error FROM messages m JOIN participants p ON p.id=m.author_id
-      LEFT JOIN participants r ON r.id=m.to_id LEFT JOIN deliveries d ON d.message_id=m.id WHERE m.id=?`,
+        `SELECT m.*, p.name AS author_name, p.kind AS author_kind
+      FROM messages m JOIN participants p ON p.id=m.author_id WHERE m.id=?`,
       )
       .get(id);
     if (!m) throw new HttpError(404, "消息不存在");
-    return m;
+    const recipients = this.db
+      .prepare(
+        `SELECT d.recipient_id,p.name AS recipient_name,p.kind AS recipient_kind,
+      d.notified_at,d.ack_at,d.error FROM deliveries d JOIN participants p ON p.id=d.recipient_id
+      WHERE d.message_id=? ORDER BY d.recipient_id`,
+      )
+      .all(id);
+    // Keep the existing single-recipient response fields as a projection, not duplicate storage.
+    const single = recipients.length === 1 ? recipients[0] : null;
+    return {
+      ...m,
+      broadcast: !!m.broadcast,
+      recipients,
+      to_id: single?.recipient_id ?? null,
+      to_name: single?.recipient_name ?? null,
+      notified_at: single?.notified_at ?? null,
+      ack_at: single?.ack_at ?? null,
+      error: single?.error ?? null,
+    };
   }
   byRequest(as, requestId) {
     requestId = required(requestId, "requestId", 160);
@@ -231,10 +278,24 @@ export class Store {
       .get(as, requestId);
     return row ? this.message(row.id) : null;
   }
-  post(topic, { as, body, to = null, replyTo = null, requestId }) {
+  post(
+    topic,
+    { as, body, to = null, broadcast = false, replyTo = null, requestId },
+  ) {
     as = required(as, "as");
     body = required(body, "body", 64000);
     requestId = required(requestId, "requestId", 160);
+    if (typeof broadcast !== "boolean")
+      throw new HttpError(400, "broadcast 必须是布尔值");
+    const supplied = to === null ? [] : typeof to === "string" ? [to] : to;
+    if (!Array.isArray(supplied))
+      throw new HttpError(400, "to 必须是参与者 ID 或 ID 数组");
+    const targets = [
+      ...new Set(supplied.map((id) => required(id, "recipient id"))),
+    ].sort();
+    if (broadcast && targets.length)
+      throw new HttpError(400, "广播与指定收件人不能同时使用");
+    if (replyTo !== null) replyTo = number(replyTo, "replyTo", 1);
     const prior = this.db
       .prepare("SELECT id FROM messages WHERE author_id=? AND request_id=?")
       .get(as, requestId);
@@ -243,7 +304,10 @@ export class Store {
       if (
         m.topic_id !== topic ||
         m.body !== body ||
-        m.to_id !== to ||
+        m.broadcast !== broadcast ||
+        (!broadcast &&
+          JSON.stringify(m.recipients.map((r) => r.recipient_id)) !==
+            JSON.stringify(targets)) ||
         m.reply_to !== replyTo
       ) {
         throw new HttpError(409, "requestId 已用于不同消息");
@@ -254,13 +318,18 @@ export class Store {
     this.participant(as);
     this.member(topic, as);
     if (t.status === "closed") throw new HttpError(409, "主题已关闭");
-    if (to !== null) {
-      this.participant(to);
-      this.member(topic, to);
-      if (to === as) throw new HttpError(400, "不能定向通知自己");
+    const recipients = broadcast
+      ? this.members(topic)
+          .filter((p) => p.id !== as)
+          .map((p) => p.id)
+          .sort()
+      : targets;
+    for (const recipient of recipients) {
+      this.participant(recipient);
+      this.member(topic, recipient);
+      if (recipient === as) throw new HttpError(400, "不能定向通知自己");
     }
     if (replyTo !== null) {
-      replyTo = number(replyTo, "replyTo", 1);
       if (this.message(replyTo).topic_id !== topic)
         throw new HttpError(400, "不能引用其他主题的消息");
     }
@@ -268,16 +337,16 @@ export class Store {
     try {
       const result = this.db
         .prepare(
-          "INSERT INTO messages(topic_id,author_id,body,to_id,reply_to,request_id) VALUES (?,?,?,?,?,?)",
+          "INSERT INTO messages(topic_id,author_id,body,broadcast,reply_to,request_id) VALUES (?,?,?,?,?,?)",
         )
-        .run(topic, as, body, to, replyTo, requestId);
+        .run(topic, as, body, broadcast ? 1 : 0, replyTo, requestId);
       const id = Number(result.lastInsertRowid);
-      if (to)
+      for (const recipient of recipients)
         this.db
           .prepare(
             "INSERT INTO deliveries(message_id,recipient_id) VALUES (?,?)",
           )
-          .run(id, to);
+          .run(id, recipient);
       this.db.exec("COMMIT");
       return this.message(id);
     } catch (e) {
@@ -305,12 +374,15 @@ export class Store {
     this.participant(as);
     const notifications = this.db
       .prepare(
-        `SELECT d.message_id,t.status AS topic_status FROM deliveries d JOIN messages m ON m.id=d.message_id
+        `SELECT d.message_id,d.notified_at,d.ack_at,d.error,t.status AS topic_status FROM deliveries d JOIN messages m ON m.id=d.message_id
       JOIN topics t ON t.id=m.topic_id WHERE d.recipient_id=? AND d.ack_at IS NULL ORDER BY d.message_id`,
       )
       .all(as)
       .map((d) => ({
         ...this.message(d.message_id),
+        notified_at: d.notified_at,
+        ack_at: d.ack_at,
+        error: d.error,
         topic_status: d.topic_status,
       }));
     const topics = this.db
@@ -353,15 +425,15 @@ export class Store {
   delivery(id, as, error = null) {
     id = number(id, "message", 1);
     this.participant(as);
-    if (this.message(id).to_id !== as)
+    if (!this.message(id).recipients.some((r) => r.recipient_id === as))
       throw new HttpError(400, "不是此消息的接收者");
     if (error !== null) error = required(error, "error", 2000);
     this.db
       .prepare(
         `UPDATE deliveries SET notified_at=CASE WHEN ? IS NULL THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE notified_at END,
-      error=? WHERE message_id=?`,
+      error=? WHERE message_id=? AND recipient_id=?`,
       )
-      .run(error, error, id);
+      .run(error, error, id, as);
     return this.message(id);
   }
 }

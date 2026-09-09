@@ -524,6 +524,7 @@ main {
 }
 .message-footer {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 13px;
   margin-top: 11px;
@@ -550,7 +551,7 @@ main {
   border: 1px solid #dae3d2;
   border-radius: 9px;
   background: #fff;
-  overflow: hidden;
+  overflow: visible;
 }
 #message-body {
   width: 100%;
@@ -581,7 +582,7 @@ input::placeholder {
   align-items: center;
   gap: 6px;
 }
-.recipient-label select {
+.recipient-picker summary {
   border: 0;
   background: #f4f6f0;
   border-radius: 4px;
@@ -1097,7 +1098,7 @@ dialog .primary {
   .welcome {
     padding: 35px 20px;
   }
-  .recipient-label select {
+  .recipient-picker summary {
     max-width: 150px;
   }
 }
@@ -1121,4 +1122,52 @@ dialog .primary {
   text-overflow: ellipsis;
   white-space: nowrap;
   margin-top: 8px;
+}
+
+.recipient-picker {
+  position: relative;
+  min-width: 0;
+}
+.recipient-picker summary {
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recipient-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  width: 280px;
+  max-width: calc(100vw - 60px);
+  max-height: 280px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 12px;
+  box-shadow: 0 8px 24px #26392f20;
+  font-size: 12px;
+}
+.recipient-menu label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+}
+.recipient-menu input {
+  accent-color: var(--green);
+  flex-shrink: 0;
+}
+#recipient-list {
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+}
+#clear-recipients {
+  margin-top: 8px;
+}
+.recipient-delivery {
+  overflow-wrap: anywhere;
 }
