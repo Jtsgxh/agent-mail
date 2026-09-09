@@ -1,74 +1,99 @@
 import WebSocket from "ws";
 import { EventEmitter } from "node:events";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
 import { deliveryText } from "./client.js";
 
 export class CodexConnection extends EventEmitter {
-  constructor(endpoint, token) {
+  constructor(endpoint, token, launch) {
     super();
-    const url = new URL(endpoint);
-    if (
-      url.protocol !== "ws:" ||
-      !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
-    )
-      throw new Error("第一版仅连接本机 ws:// App Server");
-    this.socket = new WebSocket(endpoint, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
     this.pending = new Map();
     this.nextId = 1;
     this.dead = null;
     this.states = new Map();
     this.completed = new Map();
     this.agentMessages = new Map();
-    this.socket.on("message", (raw) => {
-      let msg;
-      try {
-        msg = JSON.parse(raw.toString());
-      } catch {
-        this.fail(new Error("App Server 返回了无效 JSON"));
-        return;
+    if (launch) {
+      this.child = spawn(
+        launch.command,
+        [...launch.args, "app-server", "--stdio"],
+        {
+          cwd: launch.cwd,
+          windowsHide: true,
+          stdio: ["pipe", "pipe", "inherit"],
+        },
+      );
+      this.child.on("error", (error) => this.fail(error));
+      this.child.stdin.on("error", (error) => this.fail(error));
+      this.child.on("exit", () =>
+        this.fail(new Error("Codex App Server 进程已退出")),
+      );
+      this.lines = createInterface({ input: this.child.stdout });
+      this.lines.on("line", (line) => this.receive(line));
+    } else {
+      const url = new URL(endpoint);
+      if (
+        url.protocol !== "ws:" ||
+        !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+      ) {
+        throw new Error("第一版仅连接本机 ws:// App Server");
       }
-      if (msg.method && msg.id !== undefined) {
-        // This bridge is not a user approval UI. Never approve on the user's behalf.
-        this.socket.send(
-          JSON.stringify({
-            id: msg.id,
-            error: {
-              code: -32601,
-              message:
-                "Mailbox cannot handle interactive requests; use the owning Codex UI.",
-            },
-          }),
-        );
-        this.fail(new Error(`Codex 需要人工处理: ${msg.method}`));
-        return;
+      this.socket = new WebSocket(endpoint, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      this.socket.on("message", (raw) => this.receive(raw));
+      this.socket.on("close", () =>
+        this.fail(new Error("Codex App Server 连接已关闭")),
+      );
+      this.socket.on("error", (error) => this.fail(error));
+    }
+  }
+  send(message) {
+    const text = JSON.stringify(message);
+    if (this.child) this.child.stdin.write(text + "\n");
+    else this.socket.send(text);
+  }
+  receive(raw) {
+    let msg;
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      this.fail(new Error("App Server 返回了无效 JSON"));
+      return;
+    }
+    if (msg.method && msg.id !== undefined) {
+      // This bridge is not a user approval UI. Never approve on the user's behalf.
+      this.send({
+        id: msg.id,
+        error: {
+          code: -32601,
+          message:
+            "Mailbox cannot handle interactive requests; use the owning Codex UI.",
+        },
+      });
+      this.fail(new Error(`Codex 需要人工处理: ${msg.method}`));
+      return;
+    }
+    if (msg.id !== undefined) {
+      const p = this.pending.get(msg.id);
+      if (!p) return;
+      this.pending.delete(msg.id);
+      clearTimeout(p.timer);
+      if (msg.error) p.reject(new Error(msg.error.message));
+      else p.resolve(msg.result);
+    } else if (msg.method) {
+      const p = msg.params;
+      if (msg.method === "thread/status/changed")
+        this.states.set(p.threadId, p.status.type);
+      if (msg.method === "turn/started") this.states.set(p.threadId, "active");
+      if (msg.method === "item/completed" && p.item.type === "agentMessage")
+        this.agentMessages.set(p.turnId, p.item.text);
+      if (msg.method === "turn/completed") {
+        this.states.set(p.threadId, "idle");
+        this.completed.set(p.turn.id, p.turn);
       }
-      if (msg.id !== undefined) {
-        const p = this.pending.get(msg.id);
-        if (!p) return;
-        this.pending.delete(msg.id);
-        clearTimeout(p.timer);
-        if (msg.error) p.reject(new Error(msg.error.message));
-        else p.resolve(msg.result);
-      } else if (msg.method) {
-        const p = msg.params;
-        if (msg.method === "thread/status/changed")
-          this.states.set(p.threadId, p.status.type);
-        if (msg.method === "turn/started")
-          this.states.set(p.threadId, "active");
-        if (msg.method === "item/completed" && p.item.type === "agentMessage")
-          this.agentMessages.set(p.turnId, p.item.text);
-        if (msg.method === "turn/completed") {
-          this.states.set(p.threadId, "idle");
-          this.completed.set(p.turn.id, p.turn);
-        }
-        this.emit("update", msg);
-      }
-    });
-    this.socket.on("close", () =>
-      this.fail(new Error("Codex App Server 连接已关闭")),
-    );
-    this.socket.on("error", (e) => this.fail(e));
+      this.emit("update", msg);
+    }
   }
   fail(error) {
     if (this.dead) return;
@@ -82,20 +107,22 @@ export class CodexConnection extends EventEmitter {
   }
   async connect() {
     try {
-      await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          this.socket.terminate();
-          reject(new Error("连接 Codex 超时"));
-        }, 10000);
-        this.socket.once("open", () => {
-          clearTimeout(timer);
-          resolve();
+      if (this.socket) {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            this.socket.terminate();
+            reject(new Error("连接 Codex 超时"));
+          }, 10000);
+          this.socket.once("open", () => {
+            clearTimeout(timer);
+            resolve();
+          });
+          this.socket.once("error", (e) => {
+            clearTimeout(timer);
+            reject(e);
+          });
         });
-        this.socket.once("error", (e) => {
-          clearTimeout(timer);
-          reject(e);
-        });
-      });
+      }
       await this.call("initialize", {
         clientInfo: {
           name: "agent_mailbox",
@@ -103,11 +130,12 @@ export class CodexConnection extends EventEmitter {
           title: "Agent Mailbox",
         },
       });
-      this.socket.send(JSON.stringify({ method: "initialized" }));
+      this.send({ method: "initialized" });
       return this;
     } catch (error) {
-      this.socket.terminate();
+      this.socket?.terminate();
       this.fail(error);
+      await this.close();
       throw error;
     }
   }
@@ -120,7 +148,7 @@ export class CodexConnection extends EventEmitter {
         reject(new Error(`${method} 请求超时`));
       }, 30000);
       this.pending.set(id, { resolve, reject, timer });
-      this.socket.send(JSON.stringify({ id, method, params }));
+      this.send({ id, method, params });
     });
   }
   async until(predicate, signal, timeout = 600000) {
@@ -155,19 +183,46 @@ export class CodexConnection extends EventEmitter {
       check();
     });
   }
-  close() {
-    this.socket.close();
+  async close() {
+    this.socket?.close();
     this.fail(new Error("桥接已停止"));
+    if (
+      this.child?.pid &&
+      this.child.exitCode === null &&
+      this.child.signalCode === null
+    ) {
+      this.child.stdin.end();
+      await new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          this.child.kill();
+          resolve();
+        }, 5000);
+        this.child.once("exit", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+      this.lines.close();
+    }
   }
 }
 
 export async function runCodexBridge(
   client,
   as,
-  { endpoint, thread, token, signal, maxTurns = 12, log = console.error },
+  {
+    endpoint,
+    thread,
+    token,
+    signal,
+    connection,
+    maxTurns = 12,
+    log = console.error,
+  },
 ) {
   if (!thread) throw new Error("必须用 --thread 指定已有 App Server 会话 ID");
-  const rpc = await new CodexConnection(endpoint, token).connect();
+  const rpc =
+    connection ?? (await new CodexConnection(endpoint, token).connect());
   const disconnected = new AbortController();
   rpc.on("update", () => {
     if (rpc.dead) disconnected.abort(rpc.dead);
@@ -303,6 +358,6 @@ export async function runCodexBridge(
       await rpc
         .call("turn/interrupt", { threadId: thread, turnId: ownTurn })
         .catch(() => {});
-    rpc.close();
+    await rpc.close();
   }
 }

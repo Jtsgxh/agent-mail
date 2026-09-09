@@ -38,15 +38,43 @@ mailbox --help
 
 1. 网页新建主题，写下目标。
 2. 右侧“接入”为每个会话建立独立身份，也可以把已有身份加入其他主题。
-3. 配置相应桥接；右侧显示“桥接已连接”才表示通知连接在线。
+3. 在普通终端运行 `mailbox connect`，按名称选择参与者和已有会话；右侧显示“桥接已连接”才表示通知连接在线。
 4. 发言时选择通知对象。普通发言只记录，定向发言才投递。
 5. agent 回复后，可选择继续向对方提问。不要为礼貌性回复不断互相通知。
 
-网页会生成当前参与者对应的 CLI 命令或 Claude MCP 配置。网页中的“我”是本机用户视角；AI 回信使用自己的参与者 ID。
+网页的“连接”按钮会生成已填好身份的一条命令。网页中的“我”是本机用户视角；AI 回信使用自己的参与者 ID。
+
+## 一条命令接入
+
+```powershell
+mailbox connect
+
+# 已知道参与者名称时跳过身份选择
+mailbox connect claude --as claude-mailbox-rogue-tower
+mailbox connect codex --as codex-review
+```
+
+在原项目目录的普通交互终端运行。使用已有身份和已有会话，不另外创建讨论 agent。
+
+- **Claude：** 自动准备仅供本次启动使用的 MCP 配置，打开 Claude 原生的 `--resume` 会话选择器。先退出要继续的原会话，再选择恢复；首次仍需确认自定义 Channel，组织策略仍然适用。无需编辑 `.mcp.json`，也不禁用其他 MCP 配置或跳过执行审批。
+- **Codex：** 自动启动本机 App Server，通过 stdio 通信，无需选择端口；按序号选择已有会话，可翻页。先退出要恢复的原会话，避免两个进程同时写入。Ctrl+C 关闭桥接及其启动的 App Server，不关闭其他用户进程。
+- **已经有 App Server 接口：** 继续支持 `mailbox connect codex --as codex-review --endpoint ws://127.0.0.1:4500`，通过该服务选择已有会话；不会另起 App Server。
+
+辅助参数：
+
+```powershell
+mailbox connect --list
+mailbox connect codex --as codex-review --list
+mailbox connect claude --as claude-mailbox-rogue-tower --preview
+```
+
+`--list` 只查看身份或已有会话，`--preview` 只检查连接参数，不投递消息。Codex 列表有 `nextCursor` 时用 `--cursor` 翻页。`--thread` 可指定已有会话，`--cwd` 可指定原项目目录，`--agent-bin` 可指定本机原生程序或 Node 入口文件。也可通过 `MAILBOX_CODEX_BIN` / `MAILBOX_CLAUDE_BIN` 指定安装位置；默认从 PATH 解析。
+
+此入口负责省去配置步骤，不会向任意已打开的桌面窗口热插入连接。在 agent 自己的工具调用中优先使用 `--list` / `--preview`；交互选择和 Claude 的宿主确认需要普通终端。
 
 ## CLI
 
-所有普通命令输出 JSON；失败在 stderr 输出错误并以非零退出。`--json` 可显式声明。
+普通查询与收发命令输出 JSON；`connect` 的选择提示和桥接状态输出到终端，Claude 启动后保留其原生界面。失败以非零退出。`--json` 可显式声明普通命令的输出格式。
 
 ```powershell
 mailbox participant create --name codex-review --kind codex
@@ -95,6 +123,8 @@ Claude Code:
 
 ## Claude Code Channel
 
+日常使用优先运行 `mailbox connect claude --as 参与者名称`。下面是需要自行配置宿主时的底层方式。
+
 将以下内容合并到 Claude Code 使用的 `.mcp.json`，保留已有配置。将参与者 ID 和项目绝对路径换成实际值，确保该参与者已经加入主题。
 
 ```json
@@ -133,9 +163,9 @@ Channel 等待 MCP 初始化完成后订阅信箱，发送 `notifications/claude
 
 ## Codex App Server 桥接
 
-连接用户指定的、已有的 App Server 会话。**第一版不会自动连接任意 Codex 桌面窗口，也不会创建讨论 agent。**
+日常使用优先运行 `mailbox connect codex --as 参与者名称`。它自动启动连接进程并让你选择已有会话。**不会自动连接任意 Codex 桌面窗口，也不会创建讨论 agent。**
 
-目标 App Server 需要提供本机 WebSocket 接口，例如：
+需要自行管理 App Server 时，仍可使用本机 WebSocket 底层接口，例如：
 
 ```powershell
 codex app-server --listen ws://127.0.0.1:4500

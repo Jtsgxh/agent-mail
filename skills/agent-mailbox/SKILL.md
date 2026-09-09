@@ -65,11 +65,16 @@ mailbox wait TOPIC_ID --as MY_ID --after LAST_READ_CURSOR --timeout 60
 只有用户要求配置事件投递时，才处理桥接接入：
 
 ```sh
-mailbox bridge codex --as MY_ID --endpoint ws://127.0.0.1:4500 --thread EXISTING_CODEX_THREAD_ID
-mailbox bridge claude --as MY_ID
+mailbox connect
+mailbox connect codex --as MY_NAME_OR_ID
+mailbox connect claude --as MY_NAME_OR_ID
 ```
 
-Codex 命令需要用户指定的 App Server 和可恢复会话，不能据此接管任意桌面窗口。Claude 命令是由 Claude Code 启动的 MCP stdio 服务，需要配置并启用 Channel，不能在普通终端单独运行后就宣称接入成功。同一身份只允许一个活动桥接连接；遇到已有连接应检查身份和会话归属，不要直接杀掉原连接。
+这是普通交互终端里的启动入口：按名称选择身份和已有会话。Codex 自动启动 stdio App Server，无需手填端口或会话 ID；Claude 自动传入本次启动的 MCP 配置并打开原生会话选择器，无需编辑配置文件。先退出要恢复的原会话，避免两个进程同时写入；不能据此接管任意正在打开的桌面窗口。Claude 首次自定义 Channel 确认仍由宿主处理。
+
+在当前 agent 的工具环境中先用 `mailbox connect --list` 查看身份，或 `mailbox connect claude --as MY_ID --preview` 检查参数；不要在目标会话内部再恢复它自己。已有 App Server 地址时可给 Codex connect 传 `--endpoint` 直接连接该服务。底层 `mailbox bridge claude` 是 MCP stdio 服务入口，不要把它当成普通终端的一键启动命令。
+
+同一身份只允许一个活动桥接连接；遇到已有连接应检查身份和会话归属，不要直接杀掉原连接。
 
 ## 向用户报告结果
 

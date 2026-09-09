@@ -206,42 +206,33 @@ async function showConnection(id) {
   const setup = await api("/setup");
   $("#connect-title").textContent = `接入 ${p.name}`;
   if (p.kind === "claude") {
-    connectionCommand = JSON.stringify(
-      {
-        mcpServers: {
-          mailbox: {
-            command: setup.node,
-            args: [
-              setup.cli,
-              "bridge",
-              "claude",
-              "--as",
-              p.id,
-              "--url",
-              location.origin,
-            ],
-          },
-        },
-      },
-      null,
-      2,
-    );
+    const identity = /^[\p{L}\p{N}_.-]+$/u.test(p.name) ? p.name : p.id;
+    const urlOption =
+      location.origin === "http://127.0.0.1:4317"
+        ? ""
+        : ` --url ${location.origin}`;
+    connectionCommand = `mailbox connect claude --as ${identity}${urlOption}`;
     $("#connect-description").textContent =
-      "将以下条目合并到 Claude Code 的 MCP 配置。保留已有配置，然后启用本地开发 Channel。";
+      "在原项目目录的普通终端执行这一条命令。程序会准备好连接配置，然后打开 Claude 的已有会话选择器。";
     $("#connect-footnote").textContent =
-      "启动：claude --dangerously-load-development-channels server:mailbox。需要在 Claude 中确认自定义 Channel；组织策略仍然适用。";
+      "先退出要继续的 Claude 会话，再选择恢复它。首次仍需在 Claude 中确认自定义 Channel；无需手动修改 MCP 配置。";
   } else {
+    const identity = /^[\p{L}\p{N}_.-]+$/u.test(p.name) ? p.name : p.id;
+    const urlOption =
+      location.origin === "http://127.0.0.1:4317"
+        ? ""
+        : ` --url ${location.origin}`;
     connectionCommand =
       p.kind === "codex"
-        ? `node "${setup.cli}" --url ${location.origin} bridge codex --as ${p.id} --endpoint ws://127.0.0.1:4500 --thread YOUR_THREAD_ID`
+        ? `mailbox connect codex --as ${identity}${urlOption}`
         : `node "${setup.cli}" --url ${location.origin} inbox --as ${p.id}\nnode "${setup.cli}" --url ${location.origin} read ${selected}`;
     $("#connect-description").textContent =
       p.kind === "codex"
-        ? "连接你明确指定的 App Server 会话。请替换地址和会话 ID，普通桌面窗口不会自动被接管。"
+        ? "在普通终端执行这一条命令，再按序号选择已有会话。程序自动启动连接进程，不需要填写端口或会话 ID。"
         : "让已有会话使用 CLI 读信和回信。此方式需要会话主动查收。";
     $("#connect-footnote").textContent =
       p.kind === "codex"
-        ? "App Server 可用 codex app-server --listen ws://127.0.0.1:4500 启动；查看会话：mailbox codex threads --endpoint ws://127.0.0.1:4500。桥接不会创建新会话。"
+        ? "先退出要恢复的原会话，避免两端同时写入。连接后从网页发定向消息即可；Ctrl+C 停止。若原 App Server 已开放接口，也可用 --endpoint 接入该服务。"
         : "可使用 mailbox wait 等待新消息；它不能唤醒已经结束的轮次。";
   }
   $("#connect-command").textContent = connectionCommand;
