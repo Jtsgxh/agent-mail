@@ -193,6 +193,8 @@ function renderMessages() {
   const area = $("#message-area");
   const nearBottom =
     area.scrollHeight - area.scrollTop - area.clientHeight < 120;
+  // This view always loads a prefix of the topic's history, starting at after=0.
+  const numbers = new Map(messages.map((message, index) => [message.id, index + 1]));
   $("#messages").innerHTML =
     messages
       .map((m) => {
@@ -215,7 +217,7 @@ function renderMessages() {
             FORBID_ATTR: ["style"],
           },
         );
-        return `<article class="message" id="message-${m.id}">${avatar({ kind: m.author_kind, name: m.author_name })}<div class="message-main"><div class="message-meta"><strong>${escapeHtml(m.author_name)}</strong><span class="kind-tag">${escapeHtml(m.author_kind.toUpperCase())}</span><time class="message-time">${date(m.created_at)}</time><span class="message-number">#${m.id}</span></div>${m.reply_to ? `<div class="reply-ref">↳ 回复 #${m.reply_to}</div>` : ""}<div class="message-body">${safe}</div><div class="message-footer">${m.broadcast ? "<span>广播</span>" : ""}${delivery}<button class="text-button" data-reply="${m.id}">↩ 回复</button></div></div></article>`;
+        return `<article class="message" id="message-${m.id}">${avatar({ kind: m.author_kind, name: m.author_name })}<div class="message-main"><div class="message-meta"><strong>${escapeHtml(m.author_name)}</strong><span class="kind-tag">${escapeHtml(m.author_kind.toUpperCase())}</span><time class="message-time">${date(m.created_at)}</time><span class="message-number">#${numbers.get(m.id)}</span></div>${m.reply_to ? `<div class="reply-ref">↳ 回复 #${numbers.get(m.reply_to)}</div>` : ""}<div class="message-body">${safe}</div><div class="message-footer">${m.broadcast ? "<span>广播</span>" : ""}${delivery}<button class="text-button" data-reply="${m.id}" data-number="${numbers.get(m.id)}">↩ 回复</button></div></div></article>`;
       })
       .join("") ||
     '<div class="empty-messages">主题已经准备好了。<br>发出第一条消息，让讨论开始。</div>';
@@ -280,7 +282,7 @@ async function selectTopic(id) {
   $("#message-body").value = draft?.body ?? "";
   replyTo = draft?.replyTo ?? null;
   $("#reply-banner").hidden = !replyTo;
-  $("#reply-label").textContent = replyTo ? `引用消息 #${replyTo}` : "";
+  $("#reply-label").textContent = replyTo ? `引用消息 #${replyTo.number}` : "";
   await refresh();
   renderRecipients(draft?.notification ?? { to: [], broadcast: false });
   $("#recipient-picker").open = false;
@@ -356,9 +358,9 @@ $("#topics").onclick = guard(async (e) => {
 $("#messages").onclick = (e) => {
   const b = e.target.closest("[data-reply]");
   if (!b) return;
-  replyTo = Number(b.dataset.reply);
+  replyTo = { id: Number(b.dataset.reply), number: Number(b.dataset.number) };
   $("#reply-banner").hidden = false;
-  $("#reply-label").textContent = `引用消息 #${replyTo}`;
+  $("#reply-label").textContent = `引用消息 #${replyTo.number}`;
   $("#message-body").focus();
 };
 $("#cancel-reply").onclick = () => {
@@ -397,7 +399,7 @@ $("#composer").onsubmit = guard(async (e) => {
   if (!body.trim()) return;
   const id = selected,
     notification = notificationSelection(),
-    reference = replyTo;
+    reference = replyTo?.id ?? null;
   const key = JSON.stringify({ id, body, ...notification, reference });
   if (pendingPost?.key !== key)
     pendingPost = { key, requestId: crypto.randomUUID() };
@@ -463,12 +465,13 @@ $("#copy-topic").onclick = guard(async () => {
 });
 $("#ack-visible").onclick = guard(async () => {
   const id = selected,
-    through = messages.at(-1)?.id;
+    through = messages.at(-1)?.id,
+    throughNumber = messages.length;
   if (!through) return toast("暂无消息需要确认");
   await api(`/topics/${id}/members`, { as: "human" });
   await api(`/topics/${id}/ack`, { as: "human", through });
   await refresh();
-  toast(`已确认阅读至 #${through}`);
+  toast(`已确认阅读至 #${throughNumber}`);
 });
 window.addEventListener(
   "hashchange",

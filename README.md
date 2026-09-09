@@ -124,6 +124,8 @@ Claude 原生入口参考：[跨会话消息](https://code.claude.com/docs/en/cr
 
 普通查询与收发命令输出 JSON；加入命令返回成员关系和通知入口登记状态，不返回凭据。失败以非零退出。`--json` 可显式声明普通命令的输出格式。
 
+网页消息旁的 `#1、#2…` 是当前主题内的显示序号，回复引用与已读提示也使用该序号。CLI/API 的 `id`、`--reply-to`、`--after` 和 `--through` 仍使用全局消息 ID；调用命令时取 CLI 返回的 ID，不把网页显示序号当成 ID。
+
 ```powershell
 mailbox participant create --name codex-review --kind codex
 mailbox participant create --name claude-design --kind claude
