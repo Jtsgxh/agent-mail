@@ -16,6 +16,7 @@ import {
   validateClaudeAddress,
 } from "../src/native.js";
 import { disconnectMailbox } from "../src/connect.js";
+import { sessionNotification } from "../src/notifications.js";
 const exec = promisify(execFile);
 async function until(predicate) {
   const deadline = Date.now() + 7000;
@@ -68,6 +69,225 @@ async function fixture(t, kind = "codex") {
     program: { command: process.execPath, args: [entry] },
   };
 }
+
+test("joining via actual CLI registers the session and server delivers directly without a bridge", async (t) => {
+  const f = await fixture(t);
+  const result = await exec(
+    process.execPath,
+    [
+      resolve("bin/mailbox.js"),
+      "--url",
+      f.app.url,
+      "topic",
+      "join",
+      f.topic.id,
+      "--as",
+      f.p.name,
+      "--agent-bin",
+      f.entry,
+    ],
+    { env: { ...process.env, CODEX_THREAD_ID: "own-session" } },
+  );
+  assert.equal(JSON.parse(result.stdout).notification.status, "ready");
+  const state = await f.client.request("/api/state");
+  assert.equal(state.bridges.length, 0);
+  assert.equal(state.recipients.length, 1);
+  const m = await f.post();
+  await until(
+    async () =>
+      !!(await f.client.request(`/api/inbox?as=${f.p.id}`)).notifications[0]
+        .notified_at,
+  );
+  const call = JSON.parse((await readFile(f.calls, "utf8")).trim());
+  assert.equal(call[0], "queue");
+  assert.equal(call[2], "own-session");
+  assert.equal(
+    (await f.client.request(`/api/topics/${f.topic.id}/messages`)).messages
+      .length,
+    1,
+  );
+  assert.equal(
+    (await f.client.request(`/api/inbox?as=${f.p.id}`)).notifications[0].ack_at,
+    null,
+  );
+  // Rejoining the same endpoint must not replay an already submitted message.
+  const registration = {
+    as: f.p.id,
+    notification: { thread: "own-session", agentBin: f.entry },
+  };
+  await f.client.request(`/api/topics/${f.topic.id}/members`, registration);
+  await f.client.request(`/api/topics/${f.topic.id}/ack`, {
+    as: f.p.id,
+    through: m.id,
+  });
+  await assert.rejects(
+    f.client.request(`/api/topics/${f.topic.id}/members`, {
+      as: f.p.id,
+      notification: { thread: "someone-else", agentBin: f.entry },
+    }),
+    /409/,
+  );
+  await disconnectMailbox(f.client, f.p.id);
+  assert.equal((await readFile(f.calls, "utf8")).trim().split("\n").length, 1);
+  assert.equal((await f.client.request("/api/state")).recipients.length, 0);
+});
+
+test("direct delivery respects pause, reports failures, and only explicit rejoin retries", async (t) => {
+  const f = await fixture(t);
+  const registration = {
+    as: f.p.id,
+    notification: { thread: "own", agentBin: f.entry },
+  };
+  await f.client.request(
+    `/api/topics/${f.topic.id}`,
+    { status: "paused" },
+    "PATCH",
+  );
+  await f.post();
+  await f.client.request(`/api/topics/${f.topic.id}/members`, registration);
+  assert.equal(
+    (await f.client.request(`/api/inbox?as=${f.p.id}`)).notifications[0]
+      .notified_at,
+    null,
+  );
+  await writeFile(f.entry, "console.error('offline');process.exit(1)");
+  await f.client.request(
+    `/api/topics/${f.topic.id}`,
+    { status: "open" },
+    "PATCH",
+  );
+  await until(
+    async () =>
+      (await f.client.request("/api/state")).recipients[0].status === "error",
+  );
+  assert.match(
+    (await f.client.request(`/api/inbox?as=${f.p.id}`)).notifications[0].error,
+    /offline/,
+  );
+  await writeFile(f.entry, "console.log('queued')");
+  await f.client.request(`/api/topics/${f.topic.id}/members`, registration);
+  await until(
+    async () =>
+      !!(await f.client.request(`/api/inbox?as=${f.p.id}`)).notifications[0]
+        .notified_at,
+  );
+  assert.equal(
+    (await f.client.request("/api/state")).recipients[0].status,
+    "ready",
+  );
+});
+
+test("Claude joins with its own credentials; direct server IPC does not disclose them", async (t) => {
+  const f = await fixture(t, "claude");
+  const address =
+    process.platform === "win32"
+      ? `\\\\.\\pipe\\mailbox-join-${randomUUID()}`
+      : join(f.dir, "join.sock");
+  let frames;
+  const server = net.createServer((c) => {
+    let data = "";
+    c.on("data", (d) => (data += d));
+    c.on("end", () => {
+      frames = data.trim().split("\n").map(JSON.parse);
+      c.end();
+    });
+  });
+  server.listen(address);
+  await once(server, "listening");
+  t.after(() => new Promise((r) => server.close(r)));
+  const notification = sessionNotification(
+    f.p,
+    {},
+    {
+      CLAUDE_CODE_MESSAGING_SOCKET: address,
+      CLAUDE_CODE_MESSAGING_TOKEN: "private-test-token",
+    },
+  );
+  const joined = await f.client.request(`/api/topics/${f.topic.id}/members`, {
+    as: f.p.id,
+    notification,
+  });
+  assert.ok(!JSON.stringify(joined).includes("private-test-token"));
+  await f.post();
+  await until(() => frames?.length === 2);
+  assert.deepEqual(frames[0], { type: "auth", token: "private-test-token" });
+  assert.equal(frames[1].type, "user");
+  const state = JSON.stringify(await f.client.request("/api/state"));
+  assert.ok(!state.includes(address));
+  assert.ok(!state.includes("private-test-token"));
+  assert.equal(
+    (await f.client.request(`/api/inbox?as=${f.p.id}`)).notifications[0].ack_at,
+    null,
+  );
+  assert.throws(() => sessionNotification({ kind: "codex" }, {}, {}), /会话内/);
+  assert.equal(
+    sessionNotification({ kind: "codex" }, { manual: true }, {}),
+    undefined,
+  );
+});
+
+test("service restart preserves mail but clears native credentials until rejoin", async (t) => {
+  const f = await fixture(t);
+  const dbPath = join(f.dir, "restart.db");
+  const first = await startServer({ port: 0, dbPath });
+  let second;
+  const client = new Client(first.url);
+  let participant, topic;
+  try {
+    participant = await client.request("/api/participants", {
+      name: "restart",
+      kind: "codex",
+    });
+    topic = await client.request("/api/topics", {
+      title: "restart",
+      goal: "preserve pending mail",
+    });
+    await client.request(
+      `/api/topics/${topic.id}`,
+      { status: "paused" },
+      "PATCH",
+    );
+    await client.request(`/api/topics/${topic.id}/members`, {
+      as: participant.id,
+      notification: {
+        thread: "own",
+        agentBin: f.entry,
+        token: "ephemeral-only",
+      },
+    });
+    await client.request(`/api/topics/${topic.id}/messages`, {
+      as: "human",
+      to: participant.id,
+      body: "pending",
+      requestId: "restart-1",
+    });
+  } finally {
+    await first.close();
+  }
+  assert.ok(!(await readFile(dbPath)).includes(Buffer.from("ephemeral-only")));
+  second = await startServer({ port: 0, dbPath });
+  try {
+    const next = new Client(second.url);
+    assert.deepEqual((await next.request("/api/state")).recipients, []);
+    assert.equal(
+      (await next.request(`/api/inbox?as=${participant.id}`)).notifications
+        .length,
+      1,
+    );
+    await next.request(`/api/topics/${topic.id}/members`, {
+      as: participant.id,
+      notification: { thread: "own", agentBin: f.entry },
+    });
+    await next.request(`/api/topics/${topic.id}`, { status: "open" }, "PATCH");
+    await until(
+      async () =>
+        !!(await next.request(`/api/inbox?as=${participant.id}`))
+          .notifications[0].notified_at,
+    );
+  } finally {
+    await second.close();
+  }
+});
 
 test("Codex native notification only invokes queue, preserves messages and never auto-acks or posts a reply", async (t) => {
   const f = await fixture(t);

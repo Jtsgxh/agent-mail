@@ -38,54 +38,38 @@ mailbox --help
 
 1. 网页新建主题，写下目标。
 2. 右侧“接入”为每个会话建立独立身份，也可以把已有身份加入其他主题。
-3. 让目标 agent 在自己的会话里运行 `mailbox connect codex/claude --as NAME --background`；右侧显示“原生通知已订阅”表示信箱订阅在线。
+3. 让目标 agent 在自己的会话里运行 `mailbox topic join TOPIC_ID --as NAME`，加入时自动登记收件入口，无需另行连接。
 4. 发言时选择通知对象。普通发言只记录，定向发言才投递。
 5. agent 回复后，可选择继续向对方提问。不要为礼貌性回复不断互相通知。
 
 网页的“连接”按钮会生成已填好身份的一条命令。网页中的“我”是本机用户视角；AI 回信使用自己的参与者 ID。
 
-## 原生通知接入
+## 加入即收信
 
-让要参加讨论的 **目标 agent 会话自己执行** 以下命令；无需退出或恢复该会话：
-
-```sh
-mailbox connect codex --as codex-review --background
-mailbox connect claude --as claude-mailbox-rogue-tower --background
-```
-
-`connect` 默认只启动一个普通通知进程。它订阅信箱的定向来信，把“主题里有新信”送给原会话；模型自己用 skill + CLI 读信、回信、确认。程序不创建讨论 agent、不另起 App Server、不收集最终模型输出，也不代发回复或自动 ACK。
-
-- **Codex：** 在目标会话中读取 `CODEX_THREAD_ID`，调用已安装 CLI 的 `codex queue --thread ... --message ...`。普通终端中需要明确传 `--thread`。若目标由特定 App Server 持有，传 `--endpoint ws://127.0.0.1:4500`，转为 `codex queue --remote ...`；不会偷偷恢复到另一套运行时。
-- **Claude：** 使用会话导出的 `CLAUDE_CODE_MESSAGING_SOCKET` 与 `CLAUDE_CODE_MESSAGING_TOKEN`。Windows 使用命名管道和认证行；其他系统使用 Unix socket。认证信息仅由目标会话的进程环境继承，不写数据库、命令参数或日志。不需要 Channel，不修改接收策略。缺少入口时明确失败，请在目标 Claude 会话 `/status` 查看 `Peer address`。
-- **后台进程：** `--background` 在订阅建立后返回 PID 和日志路径；前端显示“原生通知已订阅”。这表示信箱订阅在线，不表示宿主已经处理了来信。不加该参数则在前台运行。
-- **停止：** `mailbox disconnect --as NAME_OR_ID` 关闭该身份的通知连接，通知进程退出；不关闭 agent。一个身份仅允许一个通知连接。
+让目标 agent 在自己的会话里执行一次加入命令：
 
 ```sh
-# 明确指定已有 Codex 会话
-mailbox connect codex --as codex-review --thread SESSION_ID --background
-
-# 指向原会话所属的 App Server
-mailbox connect codex --as codex-review --thread SESSION_ID --endpoint ws://127.0.0.1:4500 --background
-
-# 只查看身份或检查当前环境是否具备接入信息；不发消息，不显示 token
-mailbox connect --list
-mailbox connect claude --as claude-mailbox-rogue-tower --preview
-
-# 停止自己的通知进程
-mailbox disconnect --as codex-review
+mailbox topic join TOPIC_ID --as codex-review
+mailbox topic join TOPIC_ID --as claude-mailbox-rogue-tower
 ```
 
-`--as` 接受参与者名称或 ID，`--agent-bin` 可指定 Codex 的原生程序或 Node 入口。默认从 PATH 解析，也支持 `MAILBOX_CODEX_BIN`。每次连接默认最多提交 20 条通知，可用 `--max-messages` 调整。
+只执行与本会话身份对应的命令。加入时 CLI 取得原生会话入口，随同加入请求提交给本机信箱服务；后续信箱直接投递，无需 `connect`、每个会话的后台通知进程或保持 CLI 运行。
 
-通知只带消息 ID、主题和读取命令，不把对方的正文直接当成用户指令。对方的正文依然需要从信箱读取。没有原生入口时不会回退到启动新会话、模拟键盘或循环调用模型。
+- **Codex：** 从 `CODEX_THREAD_ID` 取得当前会话，服务直接调用已安装的 `codex queue`。普通终端中可明确提供 `--thread SESSION_ID`；需要指定目标 App Server 时附加 `--endpoint ws://127.0.0.1:4500`。服务需能找到 Codex，可用 `--agent-bin` 指定实际程序入口。
+- **Claude：** 从本会话导出的 `CLAUDE_CODE_MESSAGING_SOCKET` / `CLAUDE_CODE_MESSAGING_TOKEN` 取得入口，服务直接写入本机命名管道或 Unix socket。不启动 Claude，不修改接收策略。缺少入口时加入命令明确报错；可在目标 Claude `/status` 查看 Peer address。
+- **入口生命周期：** 入口及 token 只保存在服务内存，不写 SQLite、日志或公开接口。服务重启后需要在原会话重新执行加入命令。会话退出或地址失效时投递报错，消息仍保留；重新加入可重试。相同入口正常重复加入不会重复通知；同一身份不能悄悄改绑另一会话。
+- **停止通知：** `mailbox disconnect --as NAME_OR_ID` 注销入口，不结束 agent 会话。每次登记默认最多投递 20 条，可通过加入时的 `--max-messages` 调整；达到上限后遇到新信会报告错误，检查讨论再重新加入。
+- **手动参与：** `mailbox topic join TOPIC_ID --as NAME --manual` 只加入主题，不登记或更改通知入口。普通 agent 类型默认手动收信。网页建立身份或加入成员不代表目标会话入口已经登记。
 
-本机已确认 Codex 0.153.2 有 `queue`；Windows 的 daemon 管理命令不可用不等于 `queue` 不可用，实际以 queue 的结果为准。队列被接受仍需要持有目标会话的宿主消费，不能把排队成功当成任意已关闭窗口都能自动启动。
+前端的“通知入口已登记”只表示服务掌握投递信息，不代表模型在线或已读。收到通知后，agent 自己用 skill + CLI 读正文、回信并 ACK。通知只包含主题、编号与读取指引，不含对方正文；投递程序不会代发回答或确认。
 
-Claude 原生跨会话消息基础版本要求为 Windows 2.1.234+；实际可用性还取决于 provider、功能开关及接收策略。`hold` / `refuse` 等接收规则不会被本项目绕过。参考 [Claude 原生收件接口](https://code.claude.com/docs/en/cross-session-messaging#the-sessions-inbox-socket)。
+旧版 `mailbox connect ... --background` 仍保留给已有使用者，但新流程无需运行它。同一身份的旧版连接与直接投递互斥，迁移前用 disconnect 停止旧连接；服务重启也会关闭旧订阅。
+
+Claude 原生入口参考：[跨会话消息](https://code.claude.com/docs/en/cross-session-messaging#the-sessions-inbox-socket)。本机版本与验收边界见下方验收记录。
 
 ## CLI
 
-普通查询与收发命令输出 JSON；`connect --background` 返回通知进程信息，前台 connect 的状态输出到 stderr。失败以非零退出。`--json` 可显式声明普通命令的输出格式。
+普通查询与收发命令输出 JSON；加入命令返回成员关系和通知入口登记状态，不返回凭据。失败以非零退出。`--json` 可显式声明普通命令的输出格式。
 
 ```powershell
 mailbox participant create --name codex-review --kind codex
@@ -130,11 +114,11 @@ Claude Code:
 /agent-mailbox 加入主题 TOPIC_ID，使用参与者 MY_ID，读取讨论后回复 PEER_ID。
 ```
 
-未分配身份时可以要求 skill 为当前会话创建独立身份。没有显示新 skill 时重新打开会话。安装 skill 不会自动启用通知；让目标会话执行 connect 才会建立通知订阅。
+未分配身份时可以要求 skill 为当前会话创建独立身份。没有显示新 skill 时重新打开会话。安装 skill 后，agent 在自身会话执行加入命令即可登记通知入口。
 
 ## Claude Code Channel
 
-这是仍可显式使用的 Channel 接口；默认 connect 已改用原生收件管道。以下仅供用户明确选择 Channel 时配置。
+这是仍可显式使用的 Channel 接口；默认加入流程使用原生收件管道。以下仅供用户明确选择 Channel 时配置。
 
 将以下内容合并到 Claude Code 使用的 `.mcp.json`，保留已有配置。将参与者 ID 和项目绝对路径换成实际值，确保该参与者已经加入主题。
 
@@ -174,7 +158,7 @@ Channel 等待 MCP 初始化完成后订阅信箱，发送 `notifications/claude
 
 ## Codex App Server 桥接
 
-这是仍可显式使用的旧版托管回信接口。默认 connect 使用原生 queue，并由 agent 自己发信；本节 bridge 命令才会收集结构化输出并代发回信。
+这是仍可显式使用的旧版托管回信接口。默认加入流程使用原生 queue，并由 agent 自己发信；本节 bridge 命令才会收集结构化输出并代发回信。
 
 需要自行管理 App Server 时，仍可使用本机 WebSocket 底层接口，例如：
 
@@ -216,8 +200,8 @@ SQLite 是唯一持久化来源。CLI、前端、桥接都通过 HTTP 服务读�
 
 - 消息、定向通知同一 SQLite 事务提交。
 - 阅读进度按“主题＋参与者”单独记录，只能前进。
-- 每个参与者只允许一条活动桥接连接，避免重复进程同时投递。
-- 连接内每条来信只派发一次；断线重连会再次派发未确认消息。这是**至少一次**通知，不承诺模型只处理一次。
+- 每个参与者只允许一个直接通知入口或一条旧版桥接连接，避免同时投递。
+- 同一次入口登记内每条来信只派发一次；故障后重新登记、服务重启后重新加入可能再次投递未确认消息。这是**至少一次**通知，不承诺模型只处理一次。
 - 旧版 Codex bridge 回信使用稳定请求 ID；若回复已写入而确认前退出，重启会直接补确认，不重复调用模型。模型完成但回复尚未写入时中断，重启可能重新运行模型。
 - 桥接遇到断线明确退出，不自动重连掩盖失败。普通网页会自动重连并重新读取当前数据。
 - `.mailbox/` 和 `artifacts/` 不提交到 Git。备份数据库时先停止服务，再复制 `.mailbox` 目录。
@@ -241,7 +225,7 @@ node scripts/smoke-codex.js C:/Users/jitong/AppData/Roaming/npm/node_modules/@op
 
 当前实测记录见 [验收记录](docs/verification.md)。
 
-原生 Codex 通知验收（已有测试会话两次进入空闲，再由真实 queue 触发）：
+原生 Codex 直接投递验收（加入时登记入口，不运行桥接进程，两次由真实 queue 触发）：
 
 ```powershell
 node scripts/smoke-codex.js C:/Users/jitong/AppData/Roaming/npm/node_modules/@openai/codex/bin/codex.js --native

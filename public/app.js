@@ -7,7 +7,7 @@ const escapeHtml = (value) =>
         c
       ],
   );
-let state = { topics: [], participants: [], bridges: [] };
+let state = { topics: [], participants: [], bridges: [], recipients: [] };
 let selected = location.hash.slice(1),
   current = null,
   filter = "all",
@@ -83,11 +83,21 @@ function renderTopics() {
 }
 function renderDetails() {
   $("#goal").textContent = current.goal;
-  const connected = new Set(state.bridges.map((b) => b.participant_id));
+  const memberStatus = (p) => {
+    if (p.kind === "human") return "网页参与者";
+    const route = state.recipients.find((r) => r.participant_id === p.id);
+    if (route)
+      return route.status === "ready"
+        ? "● 通知入口已登记"
+        : "! 通知失败，重新加入可重试";
+    if (state.bridges.some((b) => b.participant_id === p.id))
+      return "● 旧版通知进程在线";
+    return ["codex", "claude"].includes(p.kind) ? "○ 等待会话加入" : "手动收信";
+  };
   $("#members").innerHTML = current.members
     .map(
       (p) =>
-        `<div class="member">${avatar(p)}<div class="member-info"><div class="member-name">${escapeHtml(p.name)}</div><div class="member-status">${p.kind === "human" ? "网页参与者" : connected.has(p.id) ? (state.bridges.find((b) => b.participant_id === p.id)?.kind.endsWith("-native") ? "● 原生通知已订阅" : "● 桥接已连接") : "○ 桥接未连接"}</div></div>${p.kind !== "human" ? `<button data-connect="${p.id}">连接</button>` : ""}</div>`,
+        `<div class="member">${avatar(p)}<div class="member-info"><div class="member-name">${escapeHtml(p.name)}</div><div class="member-status">${memberStatus(p)}</div></div>${p.kind !== "human" ? `<button data-connect="${p.id}">参与方式</button>` : ""}</div>`,
     )
     .join("");
   const outsiders = state.participants.filter(
@@ -204,20 +214,20 @@ async function selectTopic(id) {
 async function showConnection(id) {
   const p = state.participants.find((p) => p.id === id);
   const setup = await api("/setup");
-  $("#connect-title").textContent = `接入 ${p.name}`;
+  $("#connect-title").textContent = `让 ${p.name} 加入讨论`;
   const identity = /^[\p{L}\p{N}_.-]+$/u.test(p.name) ? p.name : p.id;
   const urlOption =
     location.origin === "http://127.0.0.1:4317"
       ? ""
       : ` --url ${location.origin}`;
   if (["codex", "claude"].includes(p.kind)) {
-    connectionCommand = `mailbox connect ${p.kind} --as ${identity} --background${urlOption}`;
+    connectionCommand = `mailbox topic join ${selected} --as ${identity}${urlOption}`;
     $("#connect-description").textContent =
-      "把这条命令交给要参与讨论的 agent，让它在自己的会话中执行。通知程序会留在后台，原会话保持打开。";
+      "把这条加入命令交给对应 agent，在它自己的会话里执行即可。加入时自动登记通知入口，信箱直接投递新信。";
     $("#connect-footnote").textContent =
       p.kind === "claude"
-        ? "使用 Claude 原生收件管道，不需要 Channel 或重启会话。若缺少收件环境变量，先在 Claude 中查看 /status 的 Peer address；不会自动修改接收策略。"
-        : "从目标会话取得 CODEX_THREAD_ID，用 codex queue 提交通知。普通终端需补 --thread 会话ID；若原宿主使用远端接口，还需 --endpoint。排队成功不等于模型已读。";
+        ? "无需另行连接或启动后台进程。Claude 从自身环境取得收件地址；入口缺失会明确报错。服务重启后重新加入即可。"
+        : "无需另行连接或启动后台进程。Codex 自动使用当前会话 ID；普通终端需补 --thread。入口已登记不代表模型在线或已读。";
   } else {
     connectionCommand = `node "${setup.cli}" --url ${location.origin} inbox --as ${p.id}`;
     $("#connect-description").textContent =

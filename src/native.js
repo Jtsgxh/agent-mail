@@ -15,7 +15,10 @@ export function notificationText(message, as, url) {
   );
 }
 
-export async function queueCodex(program, { thread, endpoint, text, signal }) {
+export async function queueCodex(
+  program,
+  { thread, endpoint, text, signal, token = process.env.MAILBOX_CODEX_TOKEN },
+) {
   const args = [
     ...program.args,
     "queue",
@@ -25,7 +28,7 @@ export async function queueCodex(program, { thread, endpoint, text, signal }) {
     text,
   ];
   if (endpoint) args.push("--remote", endpoint);
-  if (endpoint && process.env.MAILBOX_CODEX_TOKEN)
+  if (endpoint && token)
     args.push("--remote-auth-token-env", "MAILBOX_CODEX_TOKEN");
   try {
     const result = await exec(program.command, args, {
@@ -33,6 +36,7 @@ export async function queueCodex(program, { thread, endpoint, text, signal }) {
       signal,
       timeout: 30000,
       maxBuffer: 256000,
+      env: { ...process.env, MAILBOX_CODEX_TOKEN: token ?? "" },
     });
     return { transport: "codex-queue", detail: result.stdout.trim() };
   } catch (error) {

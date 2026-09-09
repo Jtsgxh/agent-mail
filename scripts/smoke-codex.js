@@ -9,7 +9,6 @@ import { once } from "node:events";
 import { startServer } from "../src/server.js";
 import { Client } from "../src/client.js";
 import { CodexConnection, runCodexBridge } from "../src/codex.js";
-import { listenNative } from "../src/native.js";
 
 const entry = process.argv[2];
 const native = process.argv.includes("--native");
@@ -100,24 +99,21 @@ try {
     title: "真实 Codex 唤醒验收",
     goal: "只验证收信、回复、再次空闲唤醒，不执行任何命令",
   });
-  await client.request(`/api/topics/${topic.id}/members`, { as: a.id });
-  bridge = native
-    ? listenNative(client, a, {
-        program: entry.endsWith(".js")
-          ? { command: process.execPath, args: [resolve(entry)] }
-          : { command: resolve(entry), args: [] },
-        endpoint: `ws://127.0.0.1:${port}`,
-        thread,
-        signal: stop.signal,
-      })
-    : runCodexBridge(client, a.id, {
-        endpoint: `ws://127.0.0.1:${port}`,
-        thread,
-        signal: stop.signal,
-        maxTurns: 2,
-      });
+  await client.request(`/api/topics/${topic.id}/members`, {
+    as: a.id,
+    notification: native
+      ? { thread, endpoint: `ws://127.0.0.1:${port}`, agentBin: resolve(entry) }
+      : undefined,
+  });
+  if (!native)
+    bridge = runCodexBridge(client, a.id, {
+      endpoint: `ws://127.0.0.1:${port}`,
+      thread,
+      signal: stop.signal,
+      maxTurns: 2,
+    });
   let bridgeError;
-  bridge.catch((e) => {
+  bridge?.catch((e) => {
     bridgeError = e;
   });
   for (let i = 1; i <= 2; i++) {
@@ -131,6 +127,12 @@ try {
     const deadline = Date.now() + (native ? 45000 : 180000);
     while (true) {
       if (bridgeError) throw bridgeError;
+      if (native) {
+        const state = await client.request("/api/state");
+        if (state.bridges.length) throw new Error("Unexpected bridge process");
+        if (state.recipients[0].status === "error")
+          throw new Error(state.recipients[0].error);
+      }
       const page = await client.request(`/api/topics/${topic.id}/messages`);
       const reply = page.messages.find((item) => item.reply_to === m.id);
       const pending = (await client.request(`/api/inbox?as=${a.id}`))

@@ -5,7 +5,7 @@ description: 使用 Agent Mailbox 与其他 Codex、Claude Code 或 agent 会话
 
 # Agent Mailbox
 
-使用已安装的 `mailbox` CLI 参与现有会话之间的讨论。信箱保存消息，网页显示过程；skill 指导收发行为，原生通知进程负责向宿主提交来信提示。
+使用已安装的 `mailbox` CLI 参与现有会话之间的讨论。信箱保存消息，网页显示过程；skill 指导收发行为，信箱服务在加入时登记原生入口，直接向宿主提交来信提示。
 
 ## 接入并确定讨论对象
 
@@ -54,31 +54,28 @@ mailbox wait TOPIC_ID --as MY_ID --after LAST_READ_CURSOR --timeout 60
 - 返回新消息后继续按 `next` 分页处理；其中可能包含自己的发言，不要把它当作对方回复。
 - 默认只进行一次有界等待。`timedOut=true` 表示这次等待结束，不代表讨论结束或对方离线；告知用户仍待回复。用户明确要求持续讨论时，按其约定的时长或轮次继续，不自行开启无限循环。
 - `closed=true` 或主题已关闭时停止本次讨论；暂停期间消息仍可保存，但不会派发新通知。不要为了继续讨论自行恢复或重新打开用户暂停、关闭的主题。
-- 工具超时、断线或退出后，skill 不会自动启动下一轮模型。只有下面的原生通知进程成功订阅后，才能报告后台监听已建立。
+- 工具超时、断线或退出后，skill 不会自动启动下一轮模型。加入返回 notification.status=ready 只表示收件入口已登记，不能据此声称目标模型在线。
 
-## 原生通知接入
+## 加入时自动登记通知
 
-用户要求接入自动通知时，先确定属于本会话的参与者 ID，然后在本会话自己的工具环境执行：
+在当前会话自己的工具环境执行 `mailbox topic join TOPIC_ID --as MY_ID`，会同时加入主题并登记原生入口，**不再单独执行 connect 或启动后台通知进程**。`--as` 在加入命令中也支持唯一名称。
 
-```sh
-mailbox connect codex --as MY_ID --background
-mailbox connect claude --as MY_ID --background
-```
+Codex 自动读取 `CODEX_THREAD_ID`，Claude 自动读取自身导出的 `CLAUDE_CODE_MESSAGING_SOCKET` / `CLAUDE_CODE_MESSAGING_TOKEN`。入口和认证信息随本机 HTTP 加入请求交给服务，只保存在服务内存，不写数据库、不返回给前端。不要打印或保存 token。
 
-只运行与当前宿主对应的那一条。Codex 读取 `CODEX_THREAD_ID`，使用 `codex queue`；Claude 读取自己导出的 `CLAUDE_CODE_MESSAGING_SOCKET` 和 `CLAUDE_CODE_MESSAGING_TOKEN`，使用原生收件管道。无需退出或恢复当前会话，也不启动另一个 agent。不要输出或保存 token。
+- 入口缺失会明确报错。确认是在目标会话的工具环境执行；Codex 可用明确的 --thread / --endpoint，Claude 可在本会话查看 /status 的 Peer address。不要读取其他会话凭据、改变接收策略或另起 agent 绕过失败。
+- 加入成功后 CLI 即退出，服务在收到定向消息时直接提交原生通知。服务重启后重新执行加入命令登记入口；正常重复加入同一入口不会重投。另一会话不能覆盖该身份的已有入口。
+- 用户仅需手动收信时，加入加 --manual；它只建立成员关系，不注销已有入口。停止该身份通知用 `mailbox disconnect --as MY_ID`，不会关闭 agent。
+- 旧版 connect 订阅与直接入口互斥。只有确认旧连接属于本会话且用户要求迁移时，先 disconnect 再加入。
+- 默认每次登记最多通知 20 条，加入时可用 --max-messages 调整。失败或达到上限后，先检查原因与已处理历史，再重新加入；不要自行无限重试。
 
-`connect --background` 成功返回表示普通通知进程已经订阅信箱，可以结束当前轮次；不是模型在后台循环等待。用户要求停止时用 `mailbox disconnect --as MY_ID`，它不终止 agent 会话。
-
-环境信息缺失时先 `mailbox connect codex/claude --as MY_ID --preview` 检查。Codex 可由用户明确提供 `--thread` 和必要的 `--endpoint`；Claude 在本会话用 `/status` 查看 `Peer address`。不要猜测其他会话的身份、读取其他会话 token、修改接收策略或回退到启动新会话。一个身份只允许一个通知连接。
-
-原生通知只提示主题和消息编号。收到后按前述 CLI 流程读取讨论、自己发信、自己确认阅读；**原生 connect 不会发布你的最终回答，也不会自动 ACK**。断线重连可能重投未确认消息，先检查是否已经回复。
+原生通知只提示主题和消息编号。收到后按前述 CLI 流程读取讨论、自己发信、自己确认阅读；服务不会发布你的最终回答，也不会自动 ACK。故障后重新登记可能重投未确认消息，先检查是否已经回复。
 
 ## 显式使用旧版桥接时
 
 只有本轮明确来自下面的旧版接口时才采用它的回信约定：
 
 - **Claude Channel：** 当前宿主确实列出 `mailbox_read`、`mailbox_reply`、`mailbox_ack` 工具时可使用。notify 默认 false；同一消息的新补充回复使用新的 requestId。普通原生通知不会提供这些 MCP 工具。
-- **`mailbox bridge codex`：** 本轮明确要求结构化回信时，返回 `{"body":"讨论回复","notify":false}`，需要追问才把 notify 设为 true；该旧版桥接会代发回复并确认，不再发重复 CLI 消息。不要把这个规则用于默认 connect。
+- **`mailbox bridge codex`：** 本轮明确要求结构化回信时，返回 `{"body":"讨论回复","notify":false}`，需要追问才把 notify 设为 true；该旧版桥接会代发回复并确认，不再发重复 CLI 消息。不要把这个规则用于默认加入流程。
 
 ## 向用户报告结果
 

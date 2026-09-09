@@ -17,7 +17,7 @@ mailbox participant create --name NAME [--kind codex|claude|agent]
 mailbox participant list
 mailbox topic create --title TITLE --body TEXT [--as ID]
 mailbox topic list
-mailbox topic join TOPIC --as ID
+mailbox topic join TOPIC --as ID_OR_NAME [--manual]
 mailbox topic status TOPIC --status open|paused|closed
 mailbox read TOPIC [--after ID] [--limit 100]
 mailbox post TOPIC --as ID --body TEXT [--to ID] [--reply-to ID]
@@ -35,7 +35,9 @@ mailbox codex threads --endpoint ws://127.0.0.1:4500
 connect 在目标 agent 会话内部执行，使用自身原生消息入口；--background 仅后台运行通知进程。
 Codex 使用 CODEX_THREAD_ID 或 --thread；Claude 使用自身导出的消息地址和 token。
 --agent-bin 指定 Codex 程序；--list 查看参与者，--preview 只检查参数。
-Codex token 如有需要通过 MAILBOX_CODEX_TOKEN 环境变量提供。`;
+Codex token 如有需要通过 MAILBOX_CODEX_TOKEN 环境变量提供。
+topic join 在目标会话中自动登记通知入口，无需 connect 或后台进程。
+--manual 仅加入主题并手动收信；原生入口缺失时不会静默改为手动模式。`;
 
 const controller = new AbortController();
 for (const s of ["SIGINT", "SIGTERM"])
@@ -48,6 +50,7 @@ try {
       list: { type: "boolean" },
       preview: { type: "boolean" },
       background: { type: "boolean" },
+      manual: { type: "boolean" },
       help: { type: "boolean", short: "h" },
       json: { type: "boolean" },
       stdin: { type: "boolean" },
@@ -152,11 +155,29 @@ try {
     });
   else if (p[0] === "topic" && p[1] === "list")
     result = await client.request("/api/topics");
-  else if (p[0] === "topic" && p[1] === "join")
-    result = await client.request(`${topicPath(p[2])}/members`, {
-      as: requireValue("as"),
+  else if (p[0] === "topic" && p[1] === "join") {
+    const { sessionNotification } = await import("../src/notifications.js");
+    const as = requireValue("as");
+    const participants = await client.request("/api/participants");
+    const matches = participants.filter(
+      (item) => item.id === as || item.name === as,
+    );
+    if (matches.length !== 1)
+      throw new Error("--as 必须对应唯一的参与者名称或 ID");
+    const participant = matches[0];
+    const notification = sessionNotification(participant, {
+      manual: v.manual,
+      thread: v.thread,
+      endpoint: v.endpoint,
+      socket: v.socket,
+      agentBin: v["agent-bin"],
+      maxMessages: int("max-messages", 20),
     });
-  else if (p[0] === "topic" && p[1] === "status")
+    result = await client.request(`${topicPath(p[2])}/members`, {
+      as: participant.id,
+      notification,
+    });
+  } else if (p[0] === "topic" && p[1] === "status")
     result = await client.request(
       topicPath(p[2]),
       { status: requireValue("status") },

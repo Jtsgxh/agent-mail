@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
 import { EventEmitter } from "node:events";
 import { Store, HttpError, number } from "./store.js";
+import { NativeRecipients } from "./notifications.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const assets = new Map([
@@ -30,7 +31,15 @@ export async function startServer({
   const streams = new Set();
   const bridges = new Map();
   const bridgeStreams = new Map();
-  const changed = () => changes.emit("change");
+  const changed = () => {
+    changes.emit("change");
+    recipients.dispatch();
+  };
+  const recipients = new NativeRecipients(
+    store,
+    () => `http://127.0.0.1:${server.address().port}`,
+    changed,
+  );
   const server = http.createServer(async (req, res) => {
     const send = (data, status = 200) => {
       res.writeHead(status, {
@@ -89,7 +98,7 @@ export async function startServer({
         const as = path === "/api/bridge/events" ? query.as : null;
         if (as) {
           store.participant(as);
-          if (bridges.has(as))
+          if (bridges.has(as) || recipients.routes.has(as))
             throw new HttpError(
               409,
               "此参与者已有桥接连接，请为不同会话创建独立身份",
@@ -153,6 +162,10 @@ export async function startServer({
       const disconnect = path.match(/^\/api\/bridge\/([^/]+)$/);
       if (req.method === "DELETE" && disconnect) {
         store.participant(disconnect[1]);
+        if (await recipients.remove(disconnect[1])) {
+          changed();
+          return send({ participant_id: disconnect[1], status: "stopped" });
+        }
         const stream = bridgeStreams.get(disconnect[1]);
         if (!stream) throw new HttpError(409, "该参与者没有活动通知连接");
         stream.end("event: stopped\ndata: {}\n\n");
@@ -172,6 +185,7 @@ export async function startServer({
           topics: store.topics(),
           participants: store.participants(),
           bridges: [...bridges.values()],
+          recipients: recipients.status(),
         });
       if (req.method === "GET" && path === "/api/participants")
         return send(store.participants());
@@ -211,9 +225,32 @@ export async function startServer({
         if (req.method === "GET" && action === "members")
           return send(store.members(id));
         if (req.method === "POST" && action === "members") {
-          const m = store.join(id, body.as);
+          let target;
+          if (body.notification !== undefined) {
+            store.topic(id);
+            if (bridges.has(body.as))
+              throw new HttpError(
+                409,
+                "此身份仍有旧版通知连接，请先停止旧连接",
+              );
+            target = await recipients.prepare(
+              store.participant(body.as),
+              body.notification,
+            );
+            // Recheck after resolving the executable; another request may have registered meanwhile.
+            if (bridges.has(body.as))
+              throw new HttpError(409, "此身份仍有旧版通知连接");
+          }
+          const m = target
+            ? recipients.join(id, body.as, target)
+            : store.join(id, body.as);
           changed();
-          return send(m);
+          return send({
+            ...m,
+            notification:
+              recipients.status().find((r) => r.participant_id === body.as) ??
+              null,
+          });
         }
         if (req.method === "POST" && action === "ack") {
           const a = store.ack(id, body.as, body.through);
@@ -263,6 +300,7 @@ export async function startServer({
     store,
     url: `http://127.0.0.1:${server.address().port}`,
     async close() {
+      await recipients.close();
       for (const stream of streams) stream.end();
       await new Promise((ok, fail) => {
         server.close((e) => (e ? fail(e) : ok()));

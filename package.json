@@ -13,7 +13,7 @@
     "start": "node src/server.js",
     "cli": "node bin/mailbox.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/server.js && node --check src/store.js && node --check bin/mailbox.js && node --check src/codex.js && node --check src/claude.js && node --check src/connect.js && node --check public/app.js && node --check src/native.js"
+    "check": "node --check src/server.js && node --check src/store.js && node --check bin/mailbox.js && node --check src/codex.js && node --check src/claude.js && node --check src/connect.js && node --check public/app.js && node --check src/native.js && node --check src/notifications.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
