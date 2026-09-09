@@ -7,10 +7,17 @@ const escapeHtml = (value) =>
         c
       ],
   );
-let state = { topics: [], participants: [], bridges: [], recipients: [] };
+let state = {
+  topics: [],
+  projects: [],
+  participants: [],
+  bridges: [],
+  recipients: [],
+};
 let selected = location.hash.slice(1),
   current = null,
   filter = "all",
+  projectFilter = "all",
   replyTo = null,
   messages = [],
   cursor = 0,
@@ -63,25 +70,56 @@ const label = (status) =>
   ({ open: "进行中", paused: "已暂停", closed: "已关闭" })[status];
 const avatar = (p) =>
   `<span class="avatar ${escapeHtml(p.kind)}">${escapeHtml(p.kind === "codex" ? "C" : p.kind === "claude" ? "✳" : p.kind === "human" ? "我" : p.name.slice(0, 1).toUpperCase())}</span>`;
+const projectName = (id) =>
+  id === null
+    ? "未归类"
+    : (state.projects.find((p) => p.id === id)?.name ?? "");
+const matchesProject = (topic) =>
+  projectFilter === "all" ||
+  (topic.project_id ?? "unassigned") === projectFilter;
+function projectOptions() {
+  return (
+    '<option value="">未归类</option>' +
+    state.projects
+      .map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`)
+      .join("")
+  );
+}
+function renderProjects() {
+  $("#project-filter").innerHTML =
+    '<option value="all">全部项目</option><option value="unassigned">未归类</option>' +
+    state.projects
+      .map(
+        (p) =>
+          `<option value="${p.id}">${escapeHtml(p.name)} (${p.topic_count})</option>`,
+      )
+      .join("");
+  $("#project-filter").value = projectFilter;
+}
 
 function renderTopics() {
   const query = $("#search").value.trim().toLowerCase();
   const topics = state.topics.filter(
     (t) =>
       (filter === "all" || t.status === filter) &&
-      `${t.title} ${t.goal}`.toLowerCase().includes(query),
+      matchesProject(t) &&
+      `${t.title} ${t.goal} ${projectName(t.project_id)}`
+        .toLowerCase()
+        .includes(query),
   );
-  $("#topic-count").textContent = String(state.topics.length).padStart(2, "0");
+  $("#topic-count").textContent = String(topics.length).padStart(2, "0");
   $("#topics").innerHTML =
     topics
       .map(
         (t) =>
-          `<button class="topic-card ${t.id === selected ? "active" : ""}" data-topic="${t.id}"><div class="topic-card-head"><span class="topic-dot ${t.status}"></span><span class="topic-card-title">${escapeHtml(t.title)}</span></div><p>${escapeHtml(t.goal)}</p><div class="topic-card-foot"><span>${t.message_count} 条消息</span><span>${label(t.status)}</span></div></button>`,
+          `<button class="topic-card ${t.id === selected ? "active" : ""}" data-topic="${t.id}"><div class="topic-card-head"><span class="topic-dot ${t.status}"></span><span class="topic-card-title">${escapeHtml(t.title)}</span></div><p>${escapeHtml(t.goal)}</p><div class="topic-project-label">${escapeHtml(projectName(t.project_id))}</div><div class="topic-card-foot"><span>${t.message_count} 条消息</span><span>${label(t.status)}</span></div></button>`,
       )
       .join("") ||
     '<p class="empty-topics">这里还很安静。<br>开始一个值得讨论的问题。</p>';
 }
 function renderDetails() {
+  $("#topic-project").innerHTML = projectOptions();
+  $("#topic-project").value = current.project_id ?? "";
   $("#goal").textContent = current.goal;
   const memberStatus = (p) => {
     if (p.kind === "human") return "网页参与者";
@@ -156,7 +194,9 @@ async function refresh() {
   const next = await api("/state");
   if (id !== refreshId) return;
   state = next;
+  renderProjects();
   renderTopics();
+  $(".details").hidden = !selected;
   if (!selected) {
     $("#welcome").hidden = false;
     $("#discussion").hidden = true;
@@ -184,7 +224,7 @@ async function refresh() {
   $("#topic-status").textContent = label(t.status);
   $("#topic-status").className = `badge ${t.status}`;
   $("#topic-eyebrow").textContent =
-    `DISCUSSION / ${t.id.slice(0, 8).toUpperCase()}`;
+    `${projectName(t.project_id)} / ${t.id.slice(0, 8).toUpperCase()}`;
   $("#message-count").textContent =
     `${state.topics.find((topic) => topic.id === selected)?.message_count ?? 0} 条消息`;
   $("#message-body").disabled = t.status === "closed";
@@ -239,8 +279,54 @@ async function showConnection(id) {
   $("#connect-dialog").showModal();
 }
 
-$("#new-topic").onclick = $("#first-topic").onclick = () =>
+$("#new-topic").onclick = $("#first-topic").onclick = () => {
+  $("#create-topic-project").innerHTML = projectOptions();
+  $("#create-topic-project").value = ["all", "unassigned"].includes(
+    projectFilter,
+  )
+    ? ""
+    : projectFilter;
   $("#topic-dialog").showModal();
+};
+$("#new-project").onclick = () => $("#project-dialog").showModal();
+$("#project-filter").onchange = guard(async (event) => {
+  projectFilter = event.target.value;
+  const visible = state.topics.filter(matchesProject);
+  if (!visible.some((topic) => topic.id === selected))
+    await selectTopic(visible[0]?.id ?? "");
+  else renderTopics();
+});
+$("#topic-project").onchange = guard(async (event) => {
+  const id = selected,
+    project = event.target.value || null;
+  try {
+    await api(`/topics/${id}`, { project }, "PATCH");
+    if (selected === id && projectFilter !== "all")
+      projectFilter = project ?? "unassigned";
+    await refresh();
+    toast("已更新所属项目");
+  } catch (error) {
+    if (current?.id === id) event.target.value = current.project_id ?? "";
+    throw error;
+  }
+});
+$("#project-form").onsubmit = guard(async (event) => {
+  event.preventDefault();
+  const button = event.target.querySelector('[type="submit"]');
+  button.disabled = true;
+  try {
+    const project = await api("/projects", {
+      name: new FormData(event.target).get("name"),
+    });
+    projectFilter = project.id;
+    $("#project-dialog").close();
+    event.target.reset();
+    await selectTopic("");
+    toast("项目已创建，可以开始新讨论");
+  } finally {
+    button.disabled = false;
+  }
+});
 $("#add-participant").onclick = () => {
   if (!selected) return toast("先创建或选择一个主题");
   $("#participant-dialog").showModal();
@@ -290,9 +376,11 @@ $("#topic-form").onsubmit = guard(async (e) => {
     const t = await api("/topics", {
       title: data.get("title"),
       goal: data.get("goal"),
+      project: data.get("project") || null,
     });
     $("#topic-dialog").close();
     e.target.reset();
+    if (projectFilter !== "all") projectFilter = t.project_id ?? "unassigned";
     await selectTopic(t.id);
   } finally {
     button.disabled = false;

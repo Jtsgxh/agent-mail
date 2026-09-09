@@ -13,10 +13,14 @@ mailbox connect codex --as NAME --list
 mailbox connect claude --as NAME --preview
 mailbox disconnect --as NAME
 
+mailbox project create --name NAME
+mailbox project list
 mailbox participant create --name NAME [--kind codex|claude|agent]
 mailbox participant list
-mailbox topic create --title TITLE --body TEXT [--as ID]
-mailbox topic list
+mailbox topic create --title TITLE --body TEXT [--as ID] [--project NAME_OR_ID]
+mailbox topic list [--project NAME_OR_ID | --unassigned]
+mailbox topic move TOPIC --project NAME_OR_ID
+mailbox topic move TOPIC --unassigned
 mailbox topic join TOPIC --as ID_OR_NAME [--manual]
 mailbox topic status TOPIC --status open|paused|closed
 mailbox read TOPIC [--after ID] [--limit 100]
@@ -51,6 +55,7 @@ try {
       preview: { type: "boolean" },
       background: { type: "boolean" },
       manual: { type: "boolean" },
+      unassigned: { type: "boolean" },
       help: { type: "boolean", short: "h" },
       json: { type: "boolean" },
       stdin: { type: "boolean" },
@@ -77,6 +82,7 @@ try {
           "max-messages",
           "agent-bin",
           "socket",
+          "project",
         ].map((k) => [k, { type: "string" }]),
       ),
     },
@@ -119,6 +125,18 @@ try {
     if (!id) throw new Error("缺少主题 ID");
     return `/api/topics/${encodeURIComponent(id)}`;
   };
+  const projectId = async () => {
+    if (v.unassigned && v.project !== undefined)
+      throw new Error("--project 与 --unassigned 互斥");
+    if (v.project === undefined) return null;
+    const projects = await client.request("/api/projects");
+    const matches = projects.filter(
+      (project) => project.id === v.project || project.name === v.project,
+    );
+    if (matches.length !== 1)
+      throw new Error("--project 必须对应唯一项目名称或 ID");
+    return matches[0].id;
+  };
   let result;
   if (p[0] === "connect") {
     const { connectMailbox } = await import("../src/connect.js");
@@ -140,7 +158,13 @@ try {
   } else if (p[0] === "disconnect") {
     const { disconnectMailbox } = await import("../src/connect.js");
     result = await disconnectMailbox(client, requireValue("as"));
-  } else if (p[0] === "participant" && p[1] === "create")
+  } else if (p[0] === "project" && p[1] === "create")
+    result = await client.request("/api/projects", {
+      name: requireValue("name"),
+    });
+  else if (p[0] === "project" && p[1] === "list")
+    result = await client.request("/api/projects");
+  else if (p[0] === "participant" && p[1] === "create")
     result = await client.request("/api/participants", {
       name: requireValue("name"),
       kind: v.kind ?? "agent",
@@ -152,10 +176,23 @@ try {
       title: requireValue("title"),
       goal: await text(),
       as: v.as ?? "human",
+      project: await projectId(),
     });
   else if (p[0] === "topic" && p[1] === "list")
-    result = await client.request("/api/topics");
-  else if (p[0] === "topic" && p[1] === "join") {
+    result = await client.request(
+      v.project !== undefined || v.unassigned
+        ? `/api/topics?project=${encodeURIComponent((await projectId()) ?? "unassigned")}`
+        : "/api/topics",
+    );
+  else if (p[0] === "topic" && p[1] === "move") {
+    if (v.project === undefined && !v.unassigned)
+      throw new Error("请指定 --project 或 --unassigned");
+    result = await client.request(
+      topicPath(p[2]),
+      { project: await projectId() },
+      "PATCH",
+    );
+  } else if (p[0] === "topic" && p[1] === "join") {
     const { sessionNotification } = await import("../src/notifications.js");
     const as = requireValue("as");
     const participants = await client.request("/api/participants");

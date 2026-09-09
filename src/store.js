@@ -35,6 +35,10 @@ export class Store {
       PRAGMA journal_mode = WAL;
       PRAGMA foreign_keys = ON;
       PRAGMA busy_timeout = 3000;
+      CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      );
       CREATE TABLE IF NOT EXISTS participants (
         id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, kind TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -63,9 +67,44 @@ export class Store {
       CREATE INDEX IF NOT EXISTS deliveries_recipient ON deliveries(recipient_id, message_id);
       INSERT OR IGNORE INTO participants(id,name,kind) VALUES ('human','我','human');
     `);
+    if (
+      !this.db
+        .prepare("PRAGMA table_info(topics)")
+        .all()
+        .some((column) => column.name === "project_id")
+    )
+      this.db.exec(
+        "ALTER TABLE topics ADD COLUMN project_id TEXT REFERENCES projects(id)",
+      );
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS topics_project ON topics(project_id)",
+    );
   }
   close() {
     this.db.close();
+  }
+  project(id) {
+    const project = this.db
+      .prepare("SELECT * FROM projects WHERE id=?")
+      .get(required(id, "project id"));
+    if (!project) throw new HttpError(404, "项目不存在");
+    return project;
+  }
+  projects() {
+    return this.db
+      .prepare(
+        `SELECT p.*, COUNT(t.id) AS topic_count FROM projects p
+      LEFT JOIN topics t ON t.project_id=p.id GROUP BY p.id ORDER BY p.name,p.id`,
+      )
+      .all();
+  }
+  createProject({ name }) {
+    name = required(name, "name", 80);
+    if (this.db.prepare("SELECT id FROM projects WHERE name=?").get(name))
+      throw new HttpError(409, "项目名称已存在");
+    const id = randomUUID();
+    this.db.prepare("INSERT INTO projects(id,name) VALUES (?,?)").run(id, name);
+    return this.project(id);
   }
   participant(id) {
     id = required(id, "participant id");
@@ -91,29 +130,38 @@ export class Store {
     return this.participant(id);
   }
   topic(id) {
-    const t = this.db.prepare("SELECT * FROM topics WHERE id=?").get(id);
+    const t = this.db
+      .prepare(
+        "SELECT t.*, p.name AS project_name FROM topics t LEFT JOIN projects p ON p.id=t.project_id WHERE t.id=?",
+      )
+      .get(id);
     if (!t) throw new HttpError(404, "主题不存在");
     return t;
   }
-  topics() {
+  topics(project) {
+    if (project !== undefined && project !== null) this.project(project);
     return this.db
       .prepare(
-        `SELECT t.*, COUNT(m.id) AS message_count, MAX(m.created_at) AS last_message_at
-      FROM topics t LEFT JOIN messages m ON m.topic_id=t.id GROUP BY t.id
+        `SELECT t.*, p.name AS project_name, COUNT(m.id) AS message_count, MAX(m.created_at) AS last_message_at
+      FROM topics t LEFT JOIN projects p ON p.id=t.project_id LEFT JOIN messages m ON m.topic_id=t.id
+      ${project === undefined ? "" : "WHERE t.project_id IS ?"} GROUP BY t.id
       ORDER BY COALESCE(MAX(m.created_at),t.created_at) DESC,t.id`,
       )
-      .all();
+      .all(...(project === undefined ? [] : [project]));
   }
-  createTopic({ title, goal, as = "human" }) {
+  createTopic({ title, goal, as = "human", project = null }) {
     title = required(title, "title", 160);
     goal = required(goal, "goal", 20000);
     this.participant(as);
+    if (project !== null) this.project(project);
     const id = randomUUID();
     this.db.exec("BEGIN");
     try {
       this.db
-        .prepare("INSERT INTO topics(id,title,goal) VALUES (?,?,?)")
-        .run(id, title, goal);
+        .prepare(
+          "INSERT INTO topics(id,title,goal,project_id) VALUES (?,?,?,?)",
+        )
+        .run(id, title, goal, project);
       this.join(id, as);
       this.db.exec("COMMIT");
     } catch (e) {
@@ -127,6 +175,14 @@ export class Store {
     if (!["open", "paused", "closed"].includes(status))
       throw new HttpError(400, "status 无效");
     this.db.prepare("UPDATE topics SET status=? WHERE id=?").run(status, id);
+    return this.topic(id);
+  }
+  setProject(id, project) {
+    this.topic(id);
+    if (project !== null) this.project(project);
+    this.db
+      .prepare("UPDATE topics SET project_id=? WHERE id=?")
+      .run(project, id);
     return this.topic(id);
   }
   join(topic, participant) {

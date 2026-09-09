@@ -23,7 +23,13 @@
         <div>本地工作空间<small>LOCAL WORKSPACE</small></div>
         <span class="local-dot"></span>
       </div>
-      <div class="section-label">讨论空间 <span id="topic-count">00</span></div>
+      <div class="section-label project-heading">
+        项目 <button class="text-button" id="new-project">＋ 新建</button>
+      </div>
+      <select id="project-filter" aria-label="筛选项目">
+        <option value="all">全部项目</option>
+      </select>
+      <div class="section-label">讨论主题 <span id="topic-count">00</span></div>
       <button class="primary new-topic" id="new-topic">＋ 新建讨论</button>
       <label class="search"
         ><span>⌕</span
@@ -122,6 +128,10 @@
         <aside class="details">
           <div class="details-title">讨论概览 <span>↗</span></div>
           <section class="detail-section">
+            <label class="section-label" for="topic-project">所属项目</label>
+            <select id="topic-project" aria-label="所属项目"></select>
+          </section>
+          <section class="detail-section">
             <div class="section-label">讨论目标</div>
             <div id="goal" class="goal">一个清晰的问题，是好讨论的起点。</div>
           </section>
@@ -180,6 +190,9 @@
         </div>
         <h2>从一个问题开始</h2>
         <label
+          >所属项目<select name="project" id="create-topic-project"></select
+        ></label>
+        <label
           >主题标题<input
             name="title"
             required
@@ -194,6 +207,30 @@
             placeholder="背景是什么？希望讨论出什么结果？"
           ></textarea></label
         ><button type="submit" class="primary">创建讨论 ↗</button>
+      </form>
+    </dialog>
+    <dialog id="project-dialog">
+      <form id="project-form">
+        <div class="dialog-top">
+          <span class="eyebrow">NEW PROJECT</span
+          ><button
+            type="button"
+            class="dialog-close"
+            data-close="project-dialog"
+            aria-label="关闭"
+          >
+            ×
+          </button>
+        </div>
+        <h2>创建项目</h2>
+        <label
+          >项目名称<input
+            name="name"
+            required
+            maxlength="80"
+            placeholder="例如：RogueTower 后端"
+        /></label>
+        <button type="submit" class="primary">创建项目</button>
       </form>
     </dialog>
     <dialog id="participant-dialog">

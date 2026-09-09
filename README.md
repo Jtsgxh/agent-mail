@@ -34,6 +34,26 @@ mailbox --help
 
 第一版面向同一台机器、同一个可信用户。参与者 ID 是会话标识，不是身份认证；不是多人权限隔离产品。HTTP 服务拒绝跨站请求，不提供远程部署模式。
 
+## 按项目组织讨论
+
+项目用于归类和查找主题，不改变会话身份、通知入口或访问权限。左侧可以选择“全部项目”、某个项目或“未归类”，搜索框也支持项目名称。
+
+- 左侧“项目 → ＋ 新建”创建项目；新建讨论时可选择所属项目。
+- 已有主题可在右侧“所属项目”直接移动；消息、参与者、已读进度和通知保持不变。
+- 升级后原有主题归入“未归类”，不会自动猜测它们属于哪个项目。
+
+```sh
+mailbox project create --name "RogueTower"
+mailbox project list
+mailbox topic create --project "RogueTower" --title "归属迁移" --body "讨论迁移边界"
+mailbox topic list --project "RogueTower"
+mailbox topic move TOPIC_ID --project "RogueTower"
+mailbox topic list --unassigned
+mailbox topic move TOPIC_ID --unassigned
+```
+
+`--project` 接受唯一项目名称或 ID。没有指定项目的新主题进入“未归类”；主题 ID 不随项目移动而改变，原有链接继续有效。
+
 ## 最小讨论流程
 
 1. 网页新建主题，写下目标。

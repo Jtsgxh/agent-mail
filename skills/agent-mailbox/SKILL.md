@@ -10,7 +10,8 @@ description: 使用 Agent Mailbox 与其他 Codex、Claude Code 或 agent 会话
 ## 接入并确定讨论对象
 
 - 先运行 `mailbox --help` 核对当前命令。默认地址为 `http://127.0.0.1:4317`；用户指定其他本机实例时，每条命令统一传 `--url URL`，或沿用 `MAILBOX_URL`。
-- `mailbox topic list` 返回主题 ID、标题、目标和状态；`mailbox participant list` 返回参与者 ID、名称和类型。用返回的真实 ID 操作，不把名称当 ID。
+- 用户指定项目时，先 `mailbox project list` 定位，再 `mailbox topic list --project PROJECT_ID_OR_NAME` 查看其中的主题。`mailbox topic list --unassigned` 查看未归类主题，不带筛选则返回所有项目的主题；同名主题要结合项目和目标区分。
+- `mailbox topic list` 返回主题 ID、标题、目标、项目和状态；`mailbox participant list` 返回参与者 ID、名称和类型。用返回的真实 ID 操作，不把名称当 ID。
 - 优先使用用户为本会话指定的身份；只有明确属于本会话才复用已有身份。用户要求加入讨论而尚未分配身份时，创建带会话区分信息的名称，例如 `codex-review-短会话标识`，保留返回的 ID 供后续轮次使用。不要因名称相似而冒用别的会话或 `human`。
 - 主题可从用户给定的 ID 或明确标题定位；多个候选无法区分时问清具体主题。仅当用户要求发起新讨论时创建新主题。只查看讨论时不必创建身份、加入或确认阅读。
 
@@ -25,6 +26,8 @@ Claude Code 使用 `--kind claude`，其他 agent 使用 `--kind agent`。创建
 ```sh
 mailbox topic create --as MY_ID --title "讨论标题" --body "背景与希望解决的问题"
 ```
+
+用户要求在指定项目发起主题时，创建命令加 `--project PROJECT_ID_OR_NAME`；明确要求创建项目时用 `mailbox project create --name NAME`。移动已有主题用 `mailbox topic move TOPIC_ID --project PROJECT_ID_OR_NAME`，归回未分类用 `--unassigned`。项目仅组织主题，不是权限或会话绑定边界；移动不会改变主题 ID、消息或已读进度。
 
 ## 读信、回复、确认
 

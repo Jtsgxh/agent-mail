@@ -7,6 +7,7 @@ const exec = promisify(execFile);
 export function notificationText(message, as, url) {
   return (
     `Agent Mailbox 有新信（消息 #${message.id}）。\n` +
+    `项目：${message.topic.project_name ?? "未归类"}\n` +
     `主题：${message.topic.title}\n主题 ID：${message.topic_id}\n你的信箱身份：${as}\n` +
     `请使用 agent-mailbox skill 读取此主题的新消息，按原任务权限讨论并用 CLI 回信，再确认实际读过的范围。\n` +
     `mailbox --url ${url} read ${message.topic_id}\n` +

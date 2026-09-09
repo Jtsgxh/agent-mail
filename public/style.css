@@ -1042,7 +1042,7 @@ dialog pre {
     margin: 0 0 16px;
   }
   .workspace,
-  .sidebar > .section-label,
+  .sidebar > .section-label:not(.project-heading),
   .sidebar-bottom,
   .search,
   .filters {
@@ -1114,4 +1114,25 @@ dialog pre {
   .recipient-label select {
     max-width: 150px;
   }
+}
+
+#project-filter,
+#topic-project {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  min-width: 0;
+}
+#project-filter {
+  margin-bottom: 20px;
+}
+.topic-project-label {
+  color: var(--green);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 8px;
 }

@@ -183,6 +183,7 @@ export async function startServer({
       if (req.method === "GET" && path === "/api/state")
         return send({
           topics: store.topics(),
+          projects: store.projects(),
           participants: store.participants(),
           bridges: [...bridges.values()],
           recipients: recipients.status(),
@@ -194,8 +195,17 @@ export async function startServer({
         changed();
         return send(p, 201);
       }
+      if (req.method === "GET" && path === "/api/projects")
+        return send(store.projects());
+      if (req.method === "POST" && path === "/api/projects") {
+        const project = store.createProject(body);
+        changed();
+        return send(project, 201);
+      }
       if (req.method === "GET" && path === "/api/topics")
-        return send(store.topics());
+        return send(
+          store.topics(query.project === "unassigned" ? null : query.project),
+        );
       if (req.method === "POST" && path === "/api/topics") {
         const t = store.createTopic(body);
         changed();
@@ -211,7 +221,12 @@ export async function startServer({
         if (req.method === "GET" && !action)
           return send({ ...store.topic(id), members: store.members(id) });
         if (req.method === "PATCH" && !action) {
-          const t = store.setStatus(id, body.status);
+          if ((body.status !== undefined) === (body.project !== undefined))
+            throw new HttpError(400, "每次只修改 status 或 project 之一");
+          const t =
+            body.project !== undefined
+              ? store.setProject(id, body.project)
+              : store.setStatus(id, body.status);
           changed();
           return send(t);
         }
