@@ -699,6 +699,29 @@ input::placeholder {
   line-height: 1.8;
   color: #96a08d;
 }
+.session-notices {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.session-notice {
+  border: 1px solid #dfe6d7;
+  border-radius: 7px;
+  background: #f5f8f0;
+  padding: 10px;
+  font-size: 10px;
+  line-height: 1.6;
+  color: #718366;
+}
+.session-notice strong,
+.session-notice span {
+  display: block;
+}
+.session-notice strong {
+  font-size: 11px;
+  font-weight: 500;
+  color: #56704e;
+}
 .info-card {
   border: 1px solid #e0e7d8;
   border-radius: 9px;

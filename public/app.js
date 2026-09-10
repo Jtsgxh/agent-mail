@@ -16,6 +16,7 @@ let state = {
 };
 let selected = location.hash.slice(1),
   current = null,
+  currentSessions = { codex: null, claude: null },
   filter = "all",
   projectFilter = "all",
   replyTo = null,
@@ -139,6 +140,19 @@ function renderDetails() {
   $("#existing-participant").innerHTML = outsiders
     .map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`)
     .join("");
+  const sessionStatus = {
+    reserved: "已预留，尚未确认启动",
+    submitted: "已提交启动",
+    uncertain: "启动结果未确认，请核查原会话",
+  };
+  $("#topic-sessions").innerHTML = ["codex", "claude"]
+    .filter((kind) => currentSessions[kind])
+    .map((kind) => {
+      const session = currentSessions[kind];
+      const name = kind === "codex" ? "Codex" : "Claude";
+      return `<div class="session-notice"><strong>此主题已有 ${name}，不会再开一个。</strong><span>${escapeHtml(sessionStatus[session.launch_status] ?? session.launch_status)}</span></div>`;
+    })
+    .join("") || '<p class="muted">此主题尚未创建独立 agent 会话。</p>';
   renderRecipients();
   $("#pause-topic").textContent =
     current.status === "paused" ? "恢复通知" : "暂停通知";
@@ -233,11 +247,16 @@ async function refresh() {
   renderTopics();
   $(".details").hidden = !selected;
   if (!selected) {
+    currentSessions = { codex: null, claude: null };
     $("#welcome").hidden = false;
     $("#discussion").hidden = true;
     return;
   }
-  const t = await api(`/topics/${selected}`);
+  const [t, codexSession, claudeSession] = await Promise.all([
+    api(`/topics/${selected}`),
+    api(`/topics/${selected}/sessions/codex`),
+    api(`/topics/${selected}/sessions/claude`),
+  ]);
   const loaded = [];
   let after = 0,
     page;
@@ -249,6 +268,7 @@ async function refresh() {
   } while (page.hasMore && loaded.length < Math.max(messages.length, 200));
   if (id !== refreshId) return;
   current = t;
+  currentSessions = { codex: codexSession, claude: claudeSession };
   messages = loaded;
   cursor = page.next;
   hasMore = page.hasMore;
