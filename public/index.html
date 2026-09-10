@@ -29,6 +29,10 @@
       <select id="project-filter" aria-label="筛选项目">
         <option value="all">全部项目</option>
       </select>
+      <div id="project-actions" hidden>
+        <button class="text-button" id="rename-project">改名</button>
+        <button class="text-button danger" id="delete-project">删除项目</button>
+      </div>
       <div class="section-label">讨论主题 <span id="topic-count">00</span></div>
       <button class="primary new-topic" id="new-topic">＋ 新建讨论</button>
       <label class="search"
@@ -233,10 +237,10 @@
         ><button type="submit" class="primary">创建讨论 ↗</button>
       </form>
     </dialog>
-    <dialog id="project-dialog">
+    <dialog id="project-dialog" aria-labelledby="project-dialog-title">
       <form id="project-form">
         <div class="dialog-top">
-          <span class="eyebrow">NEW PROJECT</span
+          <span class="eyebrow">PROJECT</span
           ><button
             type="button"
             class="dialog-close"
@@ -246,15 +250,34 @@
             ×
           </button>
         </div>
-        <h2>创建项目</h2>
+        <h2 id="project-dialog-title">创建项目</h2>
         <label
           >项目名称<input
+            id="project-name"
             name="name"
             required
             maxlength="80"
             placeholder="例如：RogueTower 后端"
         /></label>
-        <button type="submit" class="primary">创建项目</button>
+        <p class="dialog-error" role="alert" hidden></p>
+        <button type="submit" class="primary" id="save-project">创建项目</button>
+      </form>
+    </dialog>
+    <dialog id="delete-project-dialog" aria-labelledby="delete-project-title">
+      <form id="delete-project-form">
+        <h2 id="delete-project-title">删除项目？</h2>
+        <p id="delete-project-name"></p>
+        <p>
+          此项目下的 <strong id="delete-project-count"></strong> 个主题将移到“未归类”。
+          所有讨论、消息、参与者和会话都会保留。
+        </p>
+        <p class="dialog-error" role="alert" hidden></p>
+        <div class="delete-actions">
+          <button type="button" class="secondary" data-close="delete-project-dialog">
+            取消
+          </button>
+          <button type="submit" class="primary danger">确认删除项目</button>
+        </div>
       </form>
     </dialog>
     <dialog id="delete-topic-dialog" aria-labelledby="delete-topic-title">
@@ -267,6 +290,7 @@
         <p class="muted">
           已创建或正在启动的 Codex / Claude 会话不会结束，已交给宿主的通知也无法撤回。
         </p>
+        <p class="dialog-error" role="alert" hidden></p>
         <div class="delete-actions">
           <button type="button" class="secondary" data-close="delete-topic-dialog">
             取消

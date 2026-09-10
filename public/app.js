@@ -55,10 +55,17 @@ function toast(text, error = false) {
 }
 function guard(fn) {
   return async (event) => {
+    const errorBox = event?.target
+      ?.closest?.("dialog")
+      ?.querySelector(".dialog-error");
+    if (errorBox) errorBox.hidden = true;
     try {
       await fn(event);
     } catch (e) {
-      toast(e.message, true);
+      if (errorBox) {
+        errorBox.textContent = e.message;
+        errorBox.hidden = false;
+      } else toast(e.message, true);
     }
   };
 }
@@ -90,12 +97,18 @@ function projectOptions() {
   );
 }
 function renderProjects() {
+  if (
+    !["all", "unassigned"].includes(projectFilter) &&
+    !state.projects.some((project) => project.id === projectFilter)
+  )
+    projectFilter = "unassigned";
   $("#project-filter").innerHTML =
     '<option value="all">全部项目</option><option value="unassigned">未归类</option>' +
     state.projects
       .map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`)
       .join("");
   $("#project-filter").value = projectFilter;
+  $("#project-actions").hidden = ["all", "unassigned"].includes(projectFilter);
 }
 
 function renderTopics() {
@@ -345,9 +358,51 @@ $("#new-topic").onclick = $("#first-topic").onclick = () => {
     : projectFilter;
   $("#topic-dialog").showModal();
 };
-$("#new-project").onclick = () => $("#project-dialog").showModal();
+$("#new-project").onclick = () => {
+  $("#project-form").reset();
+  $("#project-form").dataset.project = "";
+  $("#project-dialog-title").textContent = "创建项目";
+  $("#save-project").textContent = "创建项目";
+  $("#project-dialog .dialog-error").hidden = true;
+  $("#project-dialog").showModal();
+};
+$("#rename-project").onclick = () => {
+  const project = state.projects.find((project) => project.id === projectFilter);
+  if (!project) return;
+  $("#project-form").dataset.project = project.id;
+  $("#project-name").value = project.name;
+  $("#project-dialog-title").textContent = "修改项目名称";
+  $("#save-project").textContent = "保存名称";
+  $("#project-dialog .dialog-error").hidden = true;
+  $("#project-dialog").showModal();
+};
+$("#delete-project").onclick = () => {
+  const project = state.projects.find((project) => project.id === projectFilter);
+  if (!project) return;
+  $("#delete-project-dialog").dataset.project = project.id;
+  $("#delete-project-name").textContent = project.name;
+  $("#delete-project-count").textContent = project.topic_count;
+  $("#delete-project-dialog .dialog-error").hidden = true;
+  $("#delete-project-dialog").showModal();
+};
+$("#delete-project-form").onsubmit = guard(async (event) => {
+  event.preventDefault();
+  const dialog = $("#delete-project-dialog");
+  const button = event.target.querySelector('[type="submit"]');
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    await api(`/projects/${dialog.dataset.project}`, undefined, "DELETE");
+    dialog.close();
+    await refresh();
+    toast("项目已删除，原有主题已移到未归类");
+  } finally {
+    button.disabled = false;
+  }
+});
 $("#project-filter").onchange = guard(async (event) => {
   projectFilter = event.target.value;
+  renderProjects();
   const visible = state.topics.filter(matchesProject);
   if (!visible.some((topic) => topic.id === selected))
     await selectTopic(visible[0]?.id ?? "");
@@ -370,16 +425,25 @@ $("#topic-project").onchange = guard(async (event) => {
 $("#project-form").onsubmit = guard(async (event) => {
   event.preventDefault();
   const button = event.target.querySelector('[type="submit"]');
+  if (button.disabled) return;
+  const id = event.target.dataset.project;
   button.disabled = true;
   try {
-    const project = await api("/projects", {
-      name: new FormData(event.target).get("name"),
-    });
-    projectFilter = project.id;
+    const project = await api(
+      id ? `/projects/${id}` : "/projects",
+      { name: new FormData(event.target).get("name") },
+      id ? "PATCH" : "POST",
+    );
     $("#project-dialog").close();
     event.target.reset();
-    await selectTopic("");
-    toast("项目已创建，可以开始新讨论");
+    if (id) {
+      await refresh();
+      toast("项目名称已更新");
+    } else {
+      projectFilter = project.id;
+      await selectTopic("");
+      toast("项目已创建，可以开始新讨论");
+    }
   } finally {
     button.disabled = false;
   }
@@ -503,6 +567,7 @@ $("#delete-topic").onclick = () => {
   if (!current) return;
   $("#delete-topic-name").textContent = current.title;
   $("#delete-topic-dialog").dataset.topic = current.id;
+  $("#delete-topic-dialog .dialog-error").hidden = true;
   $("#delete-topic-dialog").showModal();
 };
 $("#delete-topic-form").onsubmit = guard(async (event) => {

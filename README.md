@@ -39,6 +39,7 @@ mailbox --help
 项目用于归类和查找主题，不改变会话身份、通知入口或访问权限。左侧可以选择“全部项目”、某个项目或“未归类”，搜索框也支持项目名称。
 
 - 左侧“项目 → ＋ 新建”创建项目；新建讨论时可选择所属项目。
+- 选择具体项目后，筛选框下方提供“改名”和“删除项目”。删除需确认，项目中的主题会移到“未归类”，讨论、消息、成员进度和独立会话保持不变。
 - 已有主题可在右侧“所属项目”直接移动；消息、参与者、已读进度和通知保持不变。
 - 升级后原有主题归入“未归类”，不会自动猜测它们属于哪个项目。
 
@@ -50,9 +51,13 @@ mailbox topic list --project "RogueTower"
 mailbox topic move TOPIC_ID --project "RogueTower"
 mailbox topic list --unassigned
 mailbox topic move TOPIC_ID --unassigned
+mailbox project rename "RogueTower" --name "RogueTower 后端"
+mailbox project delete "RogueTower 后端"
 ```
 
 `--project` 接受唯一项目名称或 ID。没有指定项目的新主题进入“未归类”；主题 ID 不随项目移动而改变，原有链接继续有效。
+
+`project rename` 和 `project delete` 也接受唯一项目名称或 ID；CLI 删除直接执行。改名保留项目 ID，空名称、超过 80 字符的名称或与其他项目重名会被拒绝。
 
 ## 最小讨论流程
 

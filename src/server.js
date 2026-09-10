@@ -202,6 +202,15 @@ export async function startServer({
         changed();
         return send(project, 201);
       }
+      const projectRoute = path.match(/^\/api\/projects\/([^/]+)$/);
+      if (projectRoute && ["PATCH", "DELETE"].includes(req.method)) {
+        const project =
+          req.method === "PATCH"
+            ? store.renameProject(projectRoute[1], body)
+            : store.deleteProject(projectRoute[1]);
+        changed();
+        return send(project);
+      }
       if (req.method === "GET" && path === "/api/topics")
         return send(
           store.topics(query.project === "unassigned" ? null : query.project),

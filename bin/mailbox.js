@@ -15,6 +15,8 @@ mailbox disconnect --as NAME
 
 mailbox project create --name NAME
 mailbox project list
+mailbox project rename NAME_OR_ID --name NEW_NAME
+mailbox project delete NAME_OR_ID
 mailbox participant create --name NAME [--kind codex|claude|agent]
 mailbox participant list
 mailbox session create claude|codex --topic TOPIC --cwd PATH --as INITIATOR_ID [--timeout 60]
@@ -134,16 +136,16 @@ try {
     if (!id) throw new Error("缺少主题 ID");
     return `/api/topics/${encodeURIComponent(id)}`;
   };
-  const projectId = async () => {
-    if (v.unassigned && v.project !== undefined)
+  const projectId = async (value = v.project) => {
+    if (v.unassigned && value !== undefined)
       throw new Error("--project 与 --unassigned 互斥");
-    if (v.project === undefined) return null;
+    if (value === undefined) return null;
     const projects = await client.request("/api/projects");
     const matches = projects.filter(
-      (project) => project.id === v.project || project.name === v.project,
+      (project) => project.id === value || project.name === value,
     );
     if (matches.length !== 1)
-      throw new Error("--project 必须对应唯一项目名称或 ID");
+      throw new Error("项目必须对应唯一项目名称或 ID");
     return matches[0].id;
   };
   let result;
@@ -189,7 +191,15 @@ try {
     });
   else if (p[0] === "project" && p[1] === "list")
     result = await client.request("/api/projects");
-  else if (p[0] === "participant" && p[1] === "create")
+  else if (p[0] === "project" && ["rename", "delete"].includes(p[1])) {
+    if (!p[2]) throw new Error("缺少项目名称或 ID");
+    const body = p[1] === "rename" ? { name: requireValue("name") } : undefined;
+    result = await client.request(
+      `/api/projects/${encodeURIComponent(await projectId(p[2]))}`,
+      body,
+      p[1] === "rename" ? "PATCH" : "DELETE",
+    );
+  } else if (p[0] === "participant" && p[1] === "create")
     result = await client.request("/api/participants", {
       name: requireValue("name"),
       kind: v.kind ?? "agent",

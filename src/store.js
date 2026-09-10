@@ -205,6 +205,37 @@ export class Store {
     this.db.prepare("INSERT INTO projects(id,name) VALUES (?,?)").run(id, name);
     return this.project(id);
   }
+  renameProject(id, { name }) {
+    this.project(id);
+    name = required(name, "name", 80);
+    if (
+      this.db
+        .prepare("SELECT id FROM projects WHERE name=? AND id<>?")
+        .get(name, id)
+    )
+      throw new HttpError(409, "项目名称已存在");
+    this.db.prepare("UPDATE projects SET name=? WHERE id=?").run(name, id);
+    return this.project(id);
+  }
+  deleteProject(id) {
+    const project = this.project(id);
+    this.db.exec("BEGIN");
+    try {
+      const moved = this.db
+        .prepare("UPDATE topics SET project_id=NULL WHERE project_id=?")
+        .run(id);
+      this.db.prepare("DELETE FROM projects WHERE id=?").run(id);
+      this.db.exec("COMMIT");
+      return {
+        ...project,
+        deleted: true,
+        unassigned_topics: Number(moved.changes),
+      };
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
   participant(id) {
     id = required(id, "participant id");
     const p = this.db.prepare("SELECT * FROM participants WHERE id=?").get(id);
