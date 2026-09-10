@@ -324,59 +324,6 @@ a {
 .connection.offline:before {
   background: #bd8d57;
 }
-.service-status {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-}
-#codex-host-panel {
-  position: relative;
-}
-#codex-host-status {
-  cursor: pointer;
-  color: #687566;
-  white-space: nowrap;
-}
-#codex-host-status::marker {
-  font-size: 9px;
-}
-#codex-host-status[data-status="reachable"] {
-  color: #295d41;
-}
-#codex-host-status[data-status="unreachable"],
-#codex-host-status[data-status="invalid_config"],
-.host-error {
-  color: #a63535;
-}
-.host-status-menu {
-  position: absolute;
-  top: calc(100% + 12px);
-  right: 0;
-  z-index: 30;
-  width: 320px;
-  max-width: calc(100vw - 32px);
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: #fff;
-  box-shadow: 0 8px 24px #26392f20;
-  line-height: 1.7;
-  overflow-wrap: anywhere;
-}
-#codex-host-address {
-  font-family: Consolas, monospace;
-}
-.host-status-menu code {
-  display: block;
-  margin-top: 6px;
-}
-@media (max-width: 580px) {
-  .service-status {
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 4px;
-  }
-}
 main {
   display: flex;
   flex: 1;

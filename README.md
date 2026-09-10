@@ -130,10 +130,6 @@ Mailbox 重启会保留绑定和讨论，但清除内存中的通知入口，需
 
 ## 加入即收信
 
-网页顶部“Codex 宿主”显示默认宿主的未配置、配置错误、连接失败或可连接状态，展开后可查看地址、上次检测时间、失败原因并重新检测。页面连接信箱、重新显示，以及可见时每 30 秒会检测；该检查与主题刷新分开，只建立短暂 WebSocket 连接完成 `initialize` / `initialized` 握手，不创建会话、发消息或启动宿主。协议依据：[OpenAI App Server 文档](https://learn.chatgpt.com/docs/app-server#initialization)。
-
-宿主地址沿用 `codexHost()` 的读取顺序：信箱服务进程的 `MAILBOX_CODEX_ENDPOINT`，其次 `.mailbox/codex-host.json`；使用相同进程的 `MAILBOX_CODEX_TOKEN` 完成握手，凭据不返回网页。CLI 单独指定的 `--endpoint` 或另一进程环境中的地址不由此指示器证明可用。“可连接”只证明该次协议握手成功，不证明账户额度、模型在线或会话已读。
-
 右侧“参与者”和“独立会话”现在显示未登记通知入口、通知入口已登记、投递失败或正在停止。Codex 和 Claude 都需要在自身会话中登记入口；Claude 直接使用自身收件管道，无需另建 App Server。右上角“信箱服务已连接”仅表示网页与 Mailbox 的事件连接正常。
 
 让目标 agent 在自己的会话里执行一次加入命令：

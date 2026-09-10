@@ -29,7 +29,6 @@ let refreshId = 0,
 let sending = false,
   pendingPost = null;
 const drafts = new Map();
-let checkingHost = false;
 
 async function api(path, body, method = body === undefined ? "GET" : "POST") {
   const res = await fetch("/api" + path, {
@@ -70,51 +69,6 @@ function guard(fn) {
     }
   };
 }
-async function refreshCodexHost() {
-  if (checkingHost) return;
-  checkingHost = true;
-  const button = $("#check-codex-host");
-  const status = $("#codex-host-status");
-  button.disabled = true;
-  status.textContent = "Codex 宿主 · 检查中";
-  status.dataset.status = "checking";
-  try {
-    const host = await api("/codex/status");
-    const labels = {
-      unconfigured: "未配置",
-      invalid_config: "配置错误",
-      unreachable: "连接失败",
-      reachable: "可连接",
-    };
-    if (!labels[host.status]) throw new Error("无法识别 Codex 宿主状态");
-    status.textContent = `Codex 宿主 · ${labels[host.status]}`;
-    status.dataset.status = host.status;
-    $("#codex-host-address").textContent = host.endpoint ?? "未取得有效地址";
-    $("#codex-host-error").textContent = host.error ?? "";
-    $("#codex-host-error").hidden = !host.error;
-    $("#codex-host-checked").textContent =
-      `上次检测：${new Date(host.checked_at).toLocaleTimeString("zh-CN", { hour12: false })}`;
-    $("#codex-host-setup").hidden = host.status !== "unconfigured";
-  } catch (error) {
-    status.textContent = "Codex 宿主 · 状态未知";
-    status.dataset.status = "unknown";
-    $("#codex-host-address").textContent = "无法取得当前地址";
-    $("#codex-host-checked").textContent = "本次检测未完成";
-    $("#codex-host-setup").hidden = true;
-    $("#codex-host-error").textContent = `无法检测：${error.message}`;
-    $("#codex-host-error").hidden = false;
-  } finally {
-    checkingHost = false;
-    button.disabled = false;
-  }
-}
-$("#check-codex-host").onclick = refreshCodexHost;
-setInterval(() => {
-  if (!document.hidden) refreshCodexHost();
-}, 30000);
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) refreshCodexHost();
-});
 const date = (value) =>
   new Date(value).toLocaleString("zh-CN", {
     month: "2-digit",
@@ -671,7 +625,6 @@ const events = new EventSource("/api/events");
 events.onopen = () => {
   $("#connection").textContent = "信箱服务已连接";
   $("#connection").classList.remove("offline");
-  refreshCodexHost();
 };
 events.onerror = () => {
   $("#connection").textContent = "信箱连接中断，正在重连";
@@ -685,4 +638,3 @@ events.addEventListener("change", () => {
   );
 });
 refresh().catch((e) => toast(e.message, true));
-refreshCodexHost();
