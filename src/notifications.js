@@ -113,9 +113,14 @@ export class NativeRecipients {
       });
     }
   }
+  cancelTopic(topic) {
+    for (const route of this.routes.values()) {
+      if (route.delivery?.topic === topic)
+        route.delivery.controller.abort(new Error("主题已删除"));
+    }
+  }
   async deliver(id, route) {
-    const signal = route.controller.signal;
-    while (!signal.aborted) {
+    while (!route.controller.signal.aborted) {
       const message = this.store
         .inbox(id)
         .notifications.find(
@@ -123,6 +128,12 @@ export class NativeRecipients {
         );
       if (!message) return;
       route.sent.add(message.id);
+      const controller = new AbortController();
+      const signal = AbortSignal.any([
+        route.controller.signal,
+        controller.signal,
+      ]);
+      route.delivery = { topic: message.topic_id, controller };
       try {
         if (route.count >= route.target.maxMessages)
           throw new Error("本次通知已达上限；检查讨论后重新加入主题可继续");
@@ -138,11 +149,14 @@ export class NativeRecipients {
             signal,
           });
         else await writeClaude({ ...route.target, text, signal });
+        // Deletion may have committed while the transport was completing.
+        signal.throwIfAborted();
         this.store.delivery(message.id, id);
         route.count++;
         this.changed();
       } catch (error) {
-        if (signal.aborted) return;
+        if (route.controller.signal.aborted) return;
+        if (controller.signal.aborted) continue;
         let detail = error.message;
         if (route.target.token)
           detail = detail.replaceAll(route.target.token, "[redacted]");
@@ -151,6 +165,8 @@ export class NativeRecipients {
         this.store.delivery(message.id, id, route.error);
         this.changed();
         return;
+      } finally {
+        route.delivery = null;
       }
     }
   }

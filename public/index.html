@@ -180,6 +180,7 @@
             <p class="muted">
               暂停会保留新消息，恢复后再通知。关闭后停止收信。
             </p>
+            <button class="secondary danger" id="delete-topic">删除主题</button>
           </section>
           <div class="info-card">
             <span class="tiny-label">HOW IT WORKS</span>
@@ -254,6 +255,24 @@
             placeholder="例如：RogueTower 后端"
         /></label>
         <button type="submit" class="primary">创建项目</button>
+      </form>
+    </dialog>
+    <dialog id="delete-topic-dialog" aria-labelledby="delete-topic-title">
+      <form id="delete-topic-form">
+        <h2 id="delete-topic-title">删除主题？</h2>
+        <p id="delete-topic-name"></p>
+        <p>
+          将永久删除此主题的全部消息、阅读进度、通知回执和会话绑定记录，无法撤销。
+        </p>
+        <p class="muted">
+          已创建或正在启动的 Codex / Claude 会话不会结束，已交给宿主的通知也无法撤回。
+        </p>
+        <div class="delete-actions">
+          <button type="button" class="secondary" data-close="delete-topic-dialog">
+            取消
+          </button>
+          <button type="submit" class="primary danger">确认删除</button>
+        </div>
       </form>
     </dialog>
     <div id="toast" class="toast" role="status" hidden></div>

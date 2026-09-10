@@ -174,6 +174,10 @@ export async function listenNative(
       count++;
       console.error(`消息 #${data.id} 已递交原生入口；阅读确认由原会话完成`);
     } catch (error) {
+      if (error.status === 404) {
+        console.error(`消息 #${data.id} 所属主题已删除，继续等待其他主题`);
+        continue;
+      }
       await client
         .request(`/api/deliveries/${data.id}`, {
           as: participant.id,

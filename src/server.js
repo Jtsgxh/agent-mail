@@ -249,6 +249,12 @@ export async function startServer({
         const [, id, action] = match;
         if (req.method === "GET" && !action)
           return send({ ...store.topic(id), members: store.members(id) });
+        if (req.method === "DELETE" && !action) {
+          const result = store.deleteTopic(id);
+          recipients.cancelTopic(id);
+          changed();
+          return send(result);
+        }
         if (req.method === "PATCH" && !action) {
           if ((body.status !== undefined) === (body.project !== undefined))
             throw new HttpError(400, "每次只修改 status 或 project 之一");

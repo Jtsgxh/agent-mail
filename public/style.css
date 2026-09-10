@@ -1194,3 +1194,26 @@ dialog .primary {
 .recipient-delivery {
   overflow-wrap: anywhere;
 }
+.secondary.danger {
+  color: #a63535;
+  border-color: #d9b7b7;
+}
+.primary.danger {
+  background: #a63535;
+}
+#delete-topic {
+  margin-top: 12px;
+}
+#delete-topic-dialog p {
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+#delete-topic-name {
+  font-weight: 600;
+}
+.delete-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}

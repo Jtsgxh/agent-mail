@@ -396,3 +396,58 @@ test("Codex: restart after persisted reply but before ack does not invoke the mo
     2,
   );
 });
+
+test("Codex: deletion before recording a turn receipt preserves the bridge for another topic", async (t) => {
+  const f = await setup(t, "codex");
+  const codex = await fakeCodex(t);
+  const first = await f.post("deleted during turn");
+  const other = await f.client.request("/api/topics", { title: "保留主题", goal: "继续回复" });
+  await f.client.request(`/api/topics/${other.id}/members`, { as: f.agent.id });
+  const request = f.client.request.bind(f.client);
+  f.client.request = async (path, ...args) => {
+    if (path === `/api/deliveries/${first.id}`)
+      await request(`/api/topics/${f.topic.id}`, undefined, "DELETE");
+    return request(path, ...args);
+  };
+  const stop = new AbortController();
+  const run = runCodexBridge(f.client, f.agent.id, {
+    endpoint: codex.endpoint, thread: "existing-thread", signal: stop.signal, log() {},
+  }).catch((error) => { if (!stop.signal.aborted) throw error; });
+  t.after(async () => { stop.abort(); await run; });
+  await waitFor(async () => !(await request("/api/topics")).some((topic) => topic.id === f.topic.id));
+  await request(`/api/topics/${other.id}/messages`, { as: "human", to: f.agent.id, body: "请继续", requestId: "other-topic" });
+  await waitFor(async () => (await request(`/api/topics/${other.id}/messages`)).messages.length === 2);
+  await waitFor(async () => (await request(`/api/inbox?as=${f.agent.id}`)).notifications.length === 0);
+  assert.equal((await request("/api/state")).bridges.length, 1);
+  assert.equal(codex.requests.filter((r) => r.method === "turn/start").length, 2);
+  assert.equal(codex.requests.some((r) => r.method === "turn/interrupt"), false);
+});
+
+test("Claude: deletion before recording a channel receipt keeps notifications working", async (t) => {
+  const f = await setup(t, "claude");
+  const first = await f.post("deleted during notification");
+  const other = await f.client.request("/api/topics", { title: "保留主题", goal: "继续通知" });
+  await f.client.request(`/api/topics/${other.id}/members`, { as: f.agent.id });
+  const request = f.client.request.bind(f.client);
+  f.client.request = async (path, ...args) => {
+    if (path === `/api/deliveries/${first.id}`)
+      await request(`/api/topics/${f.topic.id}`, undefined, "DELETE");
+    return request(path, ...args);
+  };
+  const [hostTransport, channelTransport] = InMemoryTransport.createLinkedPair();
+  const channel = await startClaudeChannel(f.client, f.agent.id, { transport: channelTransport });
+  channel.done.catch(() => {});
+  const host = new McpClient({ name: "deletion-host", version: "1" });
+  const incoming = [];
+  host.setNotificationHandler(
+    z.object({ method: z.literal("notifications/claude/channel"), params: z.object({ content: z.string() }).passthrough() }),
+    (notification) => incoming.push(notification.params),
+  );
+  t.after(async () => { await channel.close(); await host.close(); });
+  await host.connect(hostTransport);
+  await waitFor(async () => !(await request("/api/topics")).some((topic) => topic.id === f.topic.id));
+  await request(`/api/topics/${other.id}/messages`, { as: "human", to: f.agent.id, body: "请继续", requestId: "other-topic" });
+  await waitFor(async () => (await request(`/api/topics/${other.id}/messages`)).messages[0].notified_at);
+  assert.equal(incoming.length, 2);
+  assert.equal((await request("/api/state")).bridges.length, 1);
+});

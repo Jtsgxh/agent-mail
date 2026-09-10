@@ -37,7 +37,11 @@ async function api(path, body, method = body === undefined ? "GET" : "POST") {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const result = await res.json();
-  if (!res.ok) throw new Error(result.error);
+  if (!res.ok) {
+    const error = new Error(result.error);
+    error.status = res.status;
+    throw error;
+  }
   return result;
 }
 function toast(text, error = false) {
@@ -243,6 +247,12 @@ async function refresh() {
   const next = await api("/state");
   if (id !== refreshId) return;
   state = next;
+  if (selected && !state.topics.some((topic) => topic.id === selected)) {
+    const deleted = selected;
+    await selectTopic("");
+    drafts.delete(deleted);
+    return;
+  }
   renderProjects();
   renderTopics();
   $(".details").hidden = !selected;
@@ -252,20 +262,39 @@ async function refresh() {
     $("#discussion").hidden = true;
     return;
   }
-  const [t, codexSession, claudeSession] = await Promise.all([
-    api(`/topics/${selected}`),
-    api(`/topics/${selected}/sessions/codex`),
-    api(`/topics/${selected}/sessions/claude`),
-  ]);
+  const topicId = selected;
   const loaded = [];
-  let after = 0,
+  let t,
+    codexSession,
+    claudeSession,
+    after = 0,
     page;
-  // Re-read the displayed window so delivery acknowledgements refresh too.
-  do {
-    page = await api(`/topics/${selected}/messages?after=${after}&limit=200`);
-    loaded.push(...page.messages);
-    after = page.next;
-  } while (page.hasMore && loaded.length < Math.max(messages.length, 200));
+  try {
+    [t, codexSession, claudeSession] = await Promise.all([
+      api(`/topics/${topicId}`),
+      api(`/topics/${topicId}/sessions/codex`),
+      api(`/topics/${topicId}/sessions/claude`),
+    ]);
+    if (id !== refreshId) return;
+    // Re-read the displayed window so delivery acknowledgements refresh too.
+    do {
+      page = await api(`/topics/${topicId}/messages?after=${after}&limit=200`);
+      loaded.push(...page.messages);
+      after = page.next;
+    } while (page.hasMore && loaded.length < Math.max(messages.length, 200));
+  } catch (error) {
+    if (id !== refreshId) return;
+    if (error.status === 404) {
+      const topics = await api("/topics");
+      if (id !== refreshId) return;
+      if (!topics.some((topic) => topic.id === topicId)) {
+        await selectTopic("");
+        drafts.delete(topicId);
+        return;
+      }
+    }
+    throw error;
+  }
   if (id !== refreshId) return;
   current = t;
   currentSessions = { codex: codexSession, claude: claudeSession };
@@ -469,6 +498,29 @@ $("#close-topic").onclick = guard(async () => {
     "PATCH",
   );
   await refresh();
+});
+$("#delete-topic").onclick = () => {
+  if (!current) return;
+  $("#delete-topic-name").textContent = current.title;
+  $("#delete-topic-dialog").dataset.topic = current.id;
+  $("#delete-topic-dialog").showModal();
+};
+$("#delete-topic-form").onsubmit = guard(async (event) => {
+  event.preventDefault();
+  const dialog = $("#delete-topic-dialog");
+  const id = dialog.dataset.topic;
+  const button = event.target.querySelector('[type="submit"]');
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    await api(`/topics/${id}`, undefined, "DELETE");
+    dialog.close();
+    await refresh();
+    drafts.delete(id);
+    toast("主题及其消息已删除");
+  } finally {
+    button.disabled = false;
+  }
 });
 $("#load-more").onclick = guard(async () => {
   const id = selected;

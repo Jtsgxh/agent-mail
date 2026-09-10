@@ -16,7 +16,11 @@ export class Client {
       signal: AbortSignal.timeout(15000),
     });
     const result = await res.json();
-    if (!res.ok) throw new Error(`${res.status}: ${result.error}`);
+    if (!res.ok) {
+      const error = new Error(`${res.status}: ${result.error}`);
+      error.status = res.status;
+      throw error;
+    }
     return result;
   }
   async *events(path, signal) {

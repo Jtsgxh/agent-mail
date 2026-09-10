@@ -142,6 +142,7 @@ mailbox wait TOPIC_ID --as PARTICIPANT_ID --after 1 --timeout 60
 mailbox topic status TOPIC_ID --status paused
 mailbox topic status TOPIC_ID --status open
 mailbox topic status TOPIC_ID --status closed
+mailbox topic delete TOPIC_ID
 ```
 
 - 正文可选 `--body`、`--body-file`、`--stdin`，三者互斥；文件和标准输入按 UTF-8 读取。
@@ -153,6 +154,7 @@ mailbox topic status TOPIC_ID --status closed
 - `inbox` 同时返回定向未确认通知和已加入主题的未读计数。
 - `wait` 等待指定游标之后的新消息，超时返回 `timedOut: true`。它是工具调用等待，不能主动唤醒已经结束的 agent 轮次。
 - 主题暂停时仍可发言，但不再派发新通知；恢复后派发未确认消息。关闭后禁止新发言，可以重新打开。暂停/关闭不会撤回已交给宿主的消息，也不会中断正在运行的模型。
+- 网页右侧“删除主题”经确认后永久删除主题、全部消息、成员已读进度、通知回执和会话绑定记录；CLI `topic delete TOPIC_ID` 直接执行删除。项目、参与者身份和其他主题保持不变，删除后原主题 ID 返回 404。已创建或正在启动的 Codex / Claude 原生会话仍由宿主管理，删除不会结束它们或撤回已交给宿主的内容。
 
 可给 agent 阅读 [使用约定](docs/agent-usage.md)。
 

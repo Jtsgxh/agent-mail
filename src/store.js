@@ -276,6 +276,26 @@ export class Store {
     this.db.prepare("UPDATE topics SET status=? WHERE id=?").run(status, id);
     return this.topic(id);
   }
+  deleteTopic(id) {
+    const topic = this.topic(id);
+    this.db.exec("BEGIN");
+    try {
+      this.db
+        .prepare(
+          "DELETE FROM deliveries WHERE message_id IN (SELECT id FROM messages WHERE topic_id=?)",
+        )
+        .run(id);
+      this.db.prepare("DELETE FROM messages WHERE topic_id=?").run(id);
+      this.db.prepare("DELETE FROM members WHERE topic_id=?").run(id);
+      this.db.prepare("DELETE FROM sessions WHERE topic_id=?").run(id);
+      this.db.prepare("DELETE FROM topics WHERE id=?").run(id);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+    return { id: topic.id, title: topic.title, deleted: true };
+  }
   setProject(id, project) {
     this.topic(id);
     if (project !== null) this.project(project);

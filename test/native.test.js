@@ -351,6 +351,33 @@ test("Codex queue error leaves a durable pending notification and a visible fail
   assert.match(m.error, /target unreachable/);
 });
 
+test("native listener keeps serving other topics after a deleted message receipt returns 404", async (t) => {
+  const f = await fixture(t);
+  const first = await f.post();
+  const other = await f.client.request("/api/topics", { title: "保留主题", goal: "继续通知" });
+  await f.client.request(`/api/topics/${other.id}/members`, { as: f.p.id });
+  const request = f.client.request.bind(f.client);
+  f.client.request = async (path, ...args) => {
+    if (path === `/api/deliveries/${first.id}`)
+      await request(`/api/topics/${f.topic.id}`, undefined, "DELETE");
+    return request(path, ...args);
+  };
+  const stop = new AbortController();
+  const run = listenNative(f.client, f.p, {
+    program: f.program,
+    thread: "existing-session",
+    signal: stop.signal,
+  }).catch((error) => { if (!stop.signal.aborted) throw error; });
+  t.after(async () => { stop.abort(); await run; });
+  await until(async () => !(await request("/api/topics")).some((topic) => topic.id === f.topic.id));
+  await request(`/api/topics/${other.id}/messages`, {
+    as: "human", to: f.p.id, body: "继续通知", requestId: "other-topic",
+  });
+  await until(async () => (await request(`/api/topics/${other.id}/messages`)).messages[0].notified_at);
+  assert.equal((await request("/api/state")).bridges.length, 1);
+  assert.equal((await readFile(f.calls, "utf8")).trim().split("\n").length, 2);
+});
+
 test("native listener respects pause and replays unconfirmed messages after reconnect", async (t) => {
   const f = await fixture(t);
   await f.client.request(

@@ -26,6 +26,7 @@ mailbox topic move TOPIC --project NAME_OR_ID
 mailbox topic move TOPIC --unassigned
 mailbox topic join TOPIC --as ID_OR_NAME [--manual]
 mailbox topic status TOPIC --status open|paused|closed
+mailbox topic delete TOPIC
 mailbox read TOPIC [--after ID] [--limit 100]
 mailbox post TOPIC --as ID --body TEXT [--to ID --to ID | --broadcast] [--reply-to ID]
 mailbox ack TOPIC --as ID --through MESSAGE_ID
@@ -204,6 +205,8 @@ try {
     });
   else if (p[0] === "topic" && p[1] === "show")
     result = await client.request(topicPath(p[2]));
+  else if (p[0] === "topic" && p[1] === "delete")
+    result = await client.request(topicPath(p[2]), undefined, "DELETE");
   else if (p[0] === "topic" && p[1] === "list")
     result = await client.request(
       v.project !== undefined || v.unassigned

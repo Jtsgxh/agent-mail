@@ -345,6 +345,17 @@ export async function runCodexBridge(
         });
         log(`消息 #${message.id} 已回复并确认；等待下一封信`);
       } catch (e) {
+        if (e.status === 404) {
+          // The user deleted this discussion; let an already started turn finish.
+          if (ownTurn) {
+            await rpc.until(() => rpc.completed.has(ownTurn), bridgeSignal);
+            rpc.completed.delete(ownTurn);
+            rpc.agentMessages.delete(ownTurn);
+            ownTurn = null;
+          }
+          log(`消息 #${message.id} 所属主题已删除，继续等待其他主题`);
+          continue;
+        }
         await client
           .request(`/api/deliveries/${message.id}`, {
             as,

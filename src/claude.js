@@ -181,6 +181,10 @@ Duplicate message IDs may be delivered after reconnect; check history before rep
         await client.request(`/api/deliveries/${data.id}`, { as });
         count++;
       } catch (e) {
+        if (e.status === 404) {
+          console.error(`消息 #${data.id} 所属主题已删除，继续等待其他主题`);
+          continue;
+        }
         await client
           .request(`/api/deliveries/${data.id}`, {
             as,
