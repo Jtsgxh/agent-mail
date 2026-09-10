@@ -8,12 +8,12 @@ export class Client {
       throw new Error("第一版只支持本机 HTTP 信箱");
     this.url = parsed.origin;
   }
-  async request(path, data, method = data === undefined ? "GET" : "POST") {
+  async request(path, data, method = data === undefined ? "GET" : "POST", { timeout = 15000, signal } = {}) {
     const res = await fetch(this.url + path, {
       method,
       headers: data === undefined ? {} : { "Content-Type": "application/json" },
       body: data === undefined ? undefined : JSON.stringify(data),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.any([AbortSignal.timeout(timeout), ...(signal ? [signal] : [])]),
     });
     const result = await res.json();
     if (!res.ok) {

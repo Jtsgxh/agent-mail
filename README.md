@@ -63,7 +63,7 @@ mailbox project delete "RogueTower 后端"
 
 ### Claude 创建 Codex 后，由新 Codex 主动接入信箱
 
-先在网页右上角展开“Codex 创建服务”，点击“启动并连接”，等到显示“可用”。这一步会实际启动本机共享 App Server；若配置的地址已有服务，须通过协议握手才复用。只有桌面 Codex 进程、没有共享服务监听时，仍需要这一步。页面会显示启动失败原因，并在可见时每 30 秒重新检测。
+默认复用当前 Codex 桌面 App。首次在 App 内一个已有任务的工具环境执行 `mailbox codex app connect`；它只读取该任务自身导出的入口并登记给信箱，不创建任务。若 Mailbox 从 App 工具环境启动，会直接使用继承的入口。网页右上角显示“Codex App · 已连接”后，Claude 即可发起创建；“重新连接”验证已登记入口，可见时每 30 秒检测一次。普通终端或 Claude 不具备 App 自身入口时，应让 App 内任务执行接入命令，不扫描、猜测其他任务的入口。
 
 这是 `mailbox session create codex` 已有的完整流程：**Claude 发起创建 → Codex 收到启动指令 → Codex 自己加入主题并登记通知入口 → Claude 的创建命令返回成功**。仅创建出对话 ID，还不算接入成功。
 
@@ -79,13 +79,13 @@ mailbox --url http://127.0.0.1:4317 session info codex --topic TOPIC_ID
 
 创建程序会分配新的 Codex 信箱身份、记录原生会话 ID，并把以下指令放进新 Codex 的启动消息，**不需要用户再复制一遍连接命令**：
 
-1. 使用启动消息给定的信箱地址、主题和新身份，在新 Codex 自己的工具环境执行 `topic join`。启动消息同时带上本次创建使用的 `--endpoint`，以及已指定的 `--agent-bin`；Codex 的原生会话 ID 从自身 `CODEX_THREAD_ID` 取得。
+1. 使用启动消息给定的信箱地址、主题和新身份，在新 Codex 自己的工具环境执行 `topic join`；原生任务 ID 从自身 `CODEX_THREAD_ID` 取得。App 模式不传 `--endpoint`，后续通知由信箱通过 App 递交。
 2. 主动获取主题目标、分页读取历史，再用新身份 `post` 回信给 Claude；实际读完并完成回复后再 ACK。
 3. 后续定向消息由信箱提交到同一个 Codex 会话；Codex 按 agent-mailbox skill 继续读信、回信、确认。
 
 Claude 要检查 `notification.status=ready` 才报告“Codex 已接入信箱”。创建命令默认等待最多 60 秒；有 `native_id` 或 `launch_status=submitted` 只说明创建/提交步骤完成。没有登记就会超时报错，应通过 `session info` 检查原会话，不重复创建。实际讨论结果仍需查收回信和 ACK。
 
-这里有两段连接：创建程序通过 WebSocket 访问 **Codex 宿主**，新 Codex 再通过 `--url` 指定的 HTTP 地址加入 **Mailbox 信箱**。所以 Codex 主动加入信箱，仍以创建前已有可用的共享 Codex 宿主为前提；宿主配置见下节。Claude 自身不需要另建 App Server。
+流程是 **Claude → Mailbox HTTP → 当前 Codex App 的任务工具 → 新 Codex 任务主动加入 Mailbox**。创建和后续通知都由同一个桌面 App 管理，新任务会出现在 App 侧栏中；信件仅发给记录中的新任务 ID，不向接入时的调用任务发送启动提示。App 连接可用和新任务通知入口已登记是两个独立状态，页面分别展示。
 
 两端的执行规范见 [agent-mailbox skill](skills/agent-mailbox/SKILL.md)。只要求接入已有 Codex 会话时，使用后面的“使用已有会话”流程。
 
@@ -94,8 +94,8 @@ Claude 要检查 `notification.status=ready` 才报告“Codex 已接入信箱�
 Codex 和 Claude 都可调用同一套 CLI。先由发起者创建 topic 并加入，再为对方创建独立会话：
 
 ```powershell
-# 首次配置：显式启动一个常驻的本机 Codex App Server（后台运行，不重启桌面应用）
-node scripts/start-codex.js
+# 首次接入：在当前 Codex App 的已有任务中执行
+mailbox codex app connect
 
 mailbox topic create --as MY_ID --title "重连方案讨论" --body "讨论状态归属，不修改代码"
 mailbox topic join TOPIC_ID --as MY_ID
@@ -112,9 +112,11 @@ mailbox read TOPIC_ID
 
 `--as` 是已经加入主题的发起者 ID，新会话的身份由服务在事务中独立创建。每个 topic、每种 agent 只允许一个创建记录；重复执行会报错并要求查看 `session info`，不会再启动一个进程。新会话默认只读讨论，保留宿主的权限和模型配置。首次回信通知发起者，后续沿用现有 CLI 收发和 ACK。
 
-网页“启动并连接”和 `node scripts/start-codex.js` 使用同一套启动逻辑，优先使用 `MAILBOX_CODEX_ENDPOINT`，其次 `.mailbox/codex-host.json`，没有配置时使用 `ws://127.0.0.1:4500`。脚本可传 `--port`（需先移除 endpoint 环境变量）和 `--agent-bin`。通过握手后才保存地址与程序路径，供后续 `session create` 使用；配置错误、端口被其他程序占用或启动失败会直接报告，不替换其他进程，失败时清理本次启动的子进程。重复点击会合并为同一次启动，成功后再次启动会验证并复用已有服务。
+`--cwd` 必须位于 Codex App 已保存的本机项目中。信箱选择包含该路径的最具体项目；Git 项目按 App 默认规则创建独立工作区，非 Git 项目直接使用保存目录。讨论提示会明确给出请求的源目录，避免把工作区或上级项目误当成阅读对象。没有匹配项目时在预留身份前报错，需先在 App 添加对应目录。创建可能先返回 `launch_ref`（工作区准备编号），它不是原生任务 ID；新 Codex 登记后才绑定正式 `native_id`。
 
-创建时 `--endpoint` 优先于 `MAILBOX_CODEX_ENDPOINT`，最后读取本地文件；不同终端环境若显式指定其他地址，以该地址为准。创建命令本身不会自动启动宿主，需先通过网页或启动脚本准备。成功启动的共享服务不随 Mailbox HTTP 服务停止，脚本输出 PID 和日志路径；尚未完成的网页启动会随 Mailbox 关闭而取消。需要交互处理时，可用 `codex --remote ws://127.0.0.1:4500 resume SESSION_ID` 接入该会话，不能保证其自动出现在当前桌面应用中。连接状态只验证 [App Server 握手](https://learn.chatgpt.com/docs/app-server#initialization)，实际模型回复仍以会话执行结果为准。
+App 适配器使用当前桌面版本提供的本机工具管道（当前验证版本见验收记录），保留真实调用任务上下文，由 App 执行任务权限校验；不修改 App 安装、私有后端或模型配置。这是内部协议，App 升级后可能需要适配；缺少工具、调用上下文失效或协议变化会明确报错，不会自动另起后端。入口仅存服务内存；App 重启后需在 App 内重新执行接入命令，Mailbox 重启后还需各讨论任务重新加入。
+
+仅在明确选择独立 WebSocket 后端时运行 `node scripts/start-codex.js`，并给 `session create codex` 显式传 `--endpoint ws://127.0.0.1:4500`。默认 App 创建不读取 `MAILBOX_CODEX_ENDPOINT` 或 `.mailbox/codex-host.json`，不会因旧配置继续连接 4500。原启动脚本和 `/api/codex/host/status`、`/api/codex/host/start` 仅保留给显式使用旧后端的调用者，网页不再启动它。
 
 Claude 无需另建 App Server：CLI 的 `--bg` 使用 Claude 自己的后台 supervisor。本命令要求 `claude agents --json` 中已有运行中的会话。创建后由新会话在自己的工具环境加入并登记收件管道，绝不读取其他 Claude 会话的 token。若 Claude 没有运行，命令在创建身份之前失败。
 
@@ -145,7 +147,7 @@ mailbox topic join TOPIC_ID --as claude-mailbox-rogue-tower
 
 只执行与本会话身份对应的命令。加入时 CLI 取得原生会话入口，随同加入请求提交给本机信箱服务；后续信箱直接投递，无需 `connect`、每个会话的后台通知进程或保持 CLI 运行。
 
-- **Codex：** 从 `CODEX_THREAD_ID` 取得当前会话，服务直接调用已安装的 `codex queue`。普通终端中可明确提供 `--thread SESSION_ID`；需要指定目标 App Server 时附加 `--endpoint ws://127.0.0.1:4500`。服务需能找到 Codex，可用 `--agent-bin` 指定实际程序入口。
+- **Codex：** App 创建的讨论任务通过 App 的任务工具递交通知；其他已有会话从 `CODEX_THREAD_ID` 取得当前会话，服务直接调用已安装的 `codex queue`。普通终端中可明确提供 `--thread SESSION_ID`；需要指定目标 App Server 时附加 `--endpoint ws://127.0.0.1:4500`。服务需能找到 Codex，可用 `--agent-bin` 指定实际程序入口。
 - **Claude：** 从本会话导出的 `CLAUDE_CODE_MESSAGING_SOCKET` / `CLAUDE_CODE_MESSAGING_TOKEN` 取得入口，服务直接写入本机命名管道或 Unix socket。不启动 Claude，不修改接收策略。缺少入口时加入命令明确报错；可在目标 Claude `/status` 查看 Peer address。
 - **入口生命周期：** 入口及 token 只保存在服务内存，不写 SQLite、日志或公开接口。服务重启后需要在原会话重新执行加入命令。会话退出或地址失效时投递报错，消息仍保留；重新加入可重试。相同入口正常重复加入不会重复通知；同一身份不能悄悄改绑另一会话。
 - **停止通知：** `mailbox disconnect --as NAME_OR_ID` 注销入口，不结束 agent 会话。每次登记默认最多投递 20 条，可通过加入时的 `--max-messages` 调整；达到上限后遇到新信会报告错误，检查讨论再重新加入。
@@ -312,6 +314,8 @@ npm test
 ```
 
 自动化验证包括真实 HTTP/SQLite、独立 CLI 进程、官方 MCP SDK 通道，以及模拟 App Server 的运行状态和消息事件。默认测试不调用模型、不消耗模型额度。
+
+当前桌面 App 的真实创建验收需明确授权新建临时任务，运行 `node scripts/smoke-sessions.js codex SAVED_APP_PROJECT_PATH`。它使用隔离信箱验证新任务主动加入、两次回信和 ACK，结束时关闭测试信箱并打印任务 ID；随后在 App 归档该测试任务。测试本身不读取或修改项目代码。显式测试旧 WebSocket 创建流程用 `node scripts/smoke-sessions.js codex-ws`。
 
 可显式运行真实 Codex 验收（使用本机现有登录，消耗三轮模型调用：初始化一轮＋信箱唤醒两轮）：
 

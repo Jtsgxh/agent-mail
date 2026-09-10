@@ -51,18 +51,18 @@
         <div>讨论信箱</div>
         <div class="service-status">
           <details id="codex-service-panel">
-            <summary id="codex-service-status" data-status="checking">Codex 创建服务 · 检查中</summary>
+            <summary id="codex-service-status" data-status="checking">Codex App · 检查中</summary>
             <div class="codex-service-menu">
-              <strong>连接 Codex 创建服务</strong>
-              <p>Claude 创建新 Codex 对话前，需要先准备好这个服务。</p>
+              <strong>连接当前 Codex App</strong>
+              <p>Claude 通过信箱，在这个 App 中创建独立讨论任务。</p>
               <p id="codex-service-address" class="muted"></p>
               <p id="codex-service-error" class="service-error" role="status" hidden></p>
               <div class="codex-service-actions">
-                <button id="start-codex-service" class="primary" type="button">启动并连接</button>
+                <button id="start-codex-service" class="primary" type="button">重新连接</button>
                 <button id="check-codex-service" class="secondary" type="button">检测状态</button>
               </div>
               <p id="codex-service-checked" class="muted"></p>
-              <p class="muted">启动后会复用这个服务创建对话；已有服务会先验证连接。新对话加入信箱后，可在右侧查看通知入口登记状态。</p>
+              <p class="muted">首次接入：让当前 App 中的任务执行 <code>mailbox codex app connect</code>。新任务加入信箱后，右侧会显示其通知入口状态。</p>
             </div>
           </details>
           <span id="connection" class="connection">信箱正在连接</span>

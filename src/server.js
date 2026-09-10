@@ -7,6 +7,8 @@ import { Store, HttpError, number } from "./store.js";
 import { NativeRecipients } from "./notifications.js";
 import { codexHostStatus } from "./sessions.js";
 import { startCodexHost } from "../scripts/start-codex.js";
+import { CodexApp } from "./codex-app.js";
+import { launchDesktopSession } from "./desktop-sessions.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const assets = new Map([
@@ -27,6 +29,7 @@ export async function startServer({
   port = 4317,
   dbPath = resolve(root, ".mailbox/mailbox.db"),
   codexHostOptions,
+  codexAppOptions,
 } = {}) {
   const store = new Store(dbPath);
   const changes = new EventEmitter();
@@ -36,6 +39,8 @@ export async function startServer({
   const bridgeStreams = new Map();
   const codexStartup = new AbortController();
   let codexStarting = null;
+  const codexApp = new CodexApp(codexAppOptions);
+  const appLaunches = new Map();
   const changed = () => {
     changes.emit("change");
     recipients.dispatch();
@@ -44,6 +49,7 @@ export async function startServer({
     store,
     () => `http://127.0.0.1:${server.address().port}`,
     changed,
+    codexApp,
   );
   const server = http.createServer(async (req, res) => {
     const send = (data, status = 200) => {
@@ -182,10 +188,16 @@ export async function startServer({
           cli: resolve(root, "bin/mailbox.js"),
         });
       if (req.method === "GET" && path === "/api/codex/status")
+        return send(await codexApp.status());
+      if (req.method === "POST" && path === "/api/codex/connect") {
+        try { return send(await codexApp.connect(body.context)); }
+        catch (error) { throw new HttpError(503, error.message); }
+      }
+      if (req.method === "GET" && path === "/api/codex/host/status")
         return send(codexStarting
           ? { status: "starting", endpoint: null, error: null, checked_at: new Date().toISOString() }
           : await codexHostStatus(codexHostOptions));
-      if (req.method === "POST" && path === "/api/codex/start") {
+      if (req.method === "POST" && path === "/api/codex/host/start") {
         if (codexStartup.signal.aborted) throw new HttpError(503, "信箱服务正在关闭");
         codexStarting ??= startCodexHost({ ...codexHostOptions, signal: codexStartup.signal })
           .catch((error) => {
@@ -245,6 +257,24 @@ export async function startServer({
       const sessionRoute = path.match(
         /^\/api\/topics\/([^/]+)\/sessions\/([^/]+)$/,
       );
+      const desktopLaunch = path.match(/^\/api\/topics\/([^/]+)\/sessions\/codex\/launch$/);
+      if (desktopLaunch && req.method === "POST") {
+        const topic = desktopLaunch[1];
+        if (appLaunches.has(topic)) throw new HttpError(409, "此主题正在创建 Codex 任务，请查看 session info，不要重复创建");
+        if (codexStartup.signal.aborted) throw new HttpError(503, "信箱正在关闭");
+        const controller = new AbortController();
+        res.once("close", () => {
+          if (!res.writableEnded) controller.abort(new Error("创建请求已断开，请检查原记录，不要重复创建"));
+        });
+        const task = launchDesktopSession(store, codexApp, topic, body, {
+          url: `http://127.0.0.1:${actualPort}`, changed,
+          signal: AbortSignal.any([controller.signal, codexStartup.signal]),
+        });
+        appLaunches.set(topic, { controller, task });
+        try { return send(await task, 201); }
+        catch (error) { throw new HttpError(error.status ?? 502, error.message); }
+        finally { appLaunches.delete(topic); }
+      }
       if (sessionRoute) {
         const [, topic, kind] = sessionRoute;
         if (req.method === "GET") {
@@ -261,11 +291,13 @@ export async function startServer({
           );
         }
         if (req.method === "POST") {
-          const session = store.reserveSession(topic, { ...body, kind });
+          const session = store.reserveSession(topic, { as: body.as, cwd: body.cwd, kind });
           changed();
           return send(session, 201);
         }
         if (req.method === "PATCH") {
+          if (store.session(topic, kind)?.transport === "desktop-app")
+            throw new HttpError(409, "App 任务的启动结果由信箱服务维护");
           const session = store.updateSession(topic, kind, body);
           changed();
           return send(session);
@@ -280,6 +312,7 @@ export async function startServer({
           return send({ ...store.topic(id), members: store.members(id) });
         if (req.method === "DELETE" && !action) {
           const result = store.deleteTopic(id);
+          appLaunches.get(id)?.controller.abort(new Error("主题已删除，取消尚未确认的 App 创建调用"));
           recipients.cancelTopic(id);
           changed();
           return send(result);
@@ -305,6 +338,8 @@ export async function startServer({
           return send(store.members(id));
         if (req.method === "POST" && action === "members") {
           let target;
+          const session = store.session(id, "codex");
+          const desktop = session?.transport === "desktop-app" && session.participant_id === body.as;
           if (body.notification !== undefined) {
             store.topic(id);
             if (bridges.has(body.as))
@@ -315,11 +350,13 @@ export async function startServer({
             target = await recipients.prepare(
               store.participant(body.as),
               body.notification,
+              { desktop },
             );
             // Recheck after resolving the executable; another request may have registered meanwhile.
             if (bridges.has(body.as))
               throw new HttpError(409, "此身份仍有旧版通知连接");
           }
+          if (desktop && target) store.bindDesktopSession(id, body.as, target.thread);
           const m = target
             ? recipients.join(id, body.as, target)
             : store.join(id, body.as);
@@ -381,6 +418,7 @@ export async function startServer({
     async close() {
       codexStartup.abort(new Error("信箱服务停止，取消尚未完成的 Codex 启动"));
       await codexStarting?.catch(() => {});
+      await Promise.allSettled([...appLaunches.values()].map((launch) => launch.task));
       await recipients.close();
       for (const stream of streams) stream.end();
       await new Promise((ok, fail) => {

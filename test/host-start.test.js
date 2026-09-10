@@ -76,14 +76,14 @@ test("HTTP start coalesces clicks, verifies protocol, saves the session default 
   t.after(async () => { if (!closed) await app.close(); });
   const client = new Client(app.url);
   const before = await client.request("/api/state");
-  const results = await Promise.all([client.request("/api/codex/start", {}), client.request("/api/codex/start", {})]);
+  const results = await Promise.all([client.request("/api/codex/host/start", {}), client.request("/api/codex/host/start", {})]);
   assert.equal(results[0].status, "reachable");
   assert.equal(results[0].pid, results[1].pid);
   assert.equal(results[0].reused, false);
   assert.equal((await codexHost({ env: {}, configPath: f.configPath })).endpoint, f.endpoint + "/");
   assert.equal(JSON.parse(await readFile(f.configPath, "utf8")).keep, "unchanged");
-  assert.equal((await client.request("/api/codex/status")).status, "reachable");
-  assert.equal((await client.request("/api/codex/start", {})).reused, true);
+  assert.equal((await client.request("/api/codex/host/status")).status, "reachable");
+  assert.equal((await client.request("/api/codex/host/start", {})).reused, true);
   assert.deepEqual(await client.request("/api/state"), before);
   const calls = (await readFile(f.calls, "utf8")).trim().split("\n").map(JSON.parse);
   assert.deepEqual(calls.filter((c) => c.spawn), [{ spawn: true, thread: null, claude: null }]);
@@ -100,7 +100,7 @@ test("occupied non-Codex port is not replaced and the configuration is unchanged
   t.after(() => new Promise((r) => { server.close(r); server.closeAllConnections(); }));
   const app = await startServer({ port: 0, dbPath: ":memory:", codexHostOptions: f.options });
   t.after(() => app.close());
-  await assert.rejects(new Client(app.url).request("/api/codex/start", {}), /502:.*端口已有服务/);
+  await assert.rejects(new Client(app.url).request("/api/codex/host/start", {}), /502:.*端口已有服务/);
   assert.equal(await readFile(f.configPath, "utf8"), f.before);
   await assert.rejects(readFile(f.pidFile), { code: "ENOENT" });
   assert.equal((await fetch(f.endpoint.replace("ws:", "http:"))).status, 200);
@@ -120,9 +120,9 @@ test("mailbox shutdown cancels unfinished host startup and releases only that ch
   const app = await startServer({ port: 0, dbPath: ":memory:", codexHostOptions: f.options });
   let closed = false;
   t.after(async () => { if (!closed) await app.close(); });
-  const request = new Client(app.url).request("/api/codex/start", {}).catch((e) => e);
+  const request = new Client(app.url).request("/api/codex/host/start", {}).catch((e) => e);
   await until(async () => !!(await readFile(f.pidFile, "utf8").catch(() => "")));
-  assert.equal((await new Client(app.url).request("/api/codex/status")).status, "starting");
+  assert.equal((await new Client(app.url).request("/api/codex/host/status")).status, "starting");
   await app.close(); closed = true;
   assert.ok(await request instanceof Error);
   assert.equal(await readFile(f.configPath, "utf8"), f.before);

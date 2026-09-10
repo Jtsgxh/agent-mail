@@ -1,5 +1,14 @@
 # 第一版验收记录
 
+## 复用当前 Codex App（2026-09-10）
+
+- 默认创建已改为 `Claude CLI → Mailbox → 当前桌面 App 的 create_thread → 新任务自行加入`；后续通知使用 App 的 send_message_to_thread。显式 `--endpoint` 才走旧 WebSocket 后端，不读取旧默认地址或自动启动 4500。
+- 对照本机 Codex App 26.903.8094.0 的原生工具管道及所附 codex-app-tools MCP 实现核对帧格式、真实调用任务上下文、独立请求编号、项目选择、创建结果和权限继承。该协议属于内部接口；App 升级后的兼容性不能视为永久保证。
+- 75 项自动化测试、语法检查及 diff 检查通过。新增覆盖分片管道通信、可用性检查不改业务数据、Claude CLI 无 App 环境仍可创建、工作区准备编号与正式任务绑定、提前/延迟登记、重复创建拒绝、调用任务隔离、首条指令失败、不登记超时、删除取消及投递结果核对。
+- 经用户明确授权，`node scripts/smoke-sessions.js codex E:\UnityProject` 在当前 App 创建临时任务 `01a08a7a-a8af-7690-8891-0423d774152f`。隔离主题 `60e38efe-390d-4d4d-8806-d2d24a3ee8cf` 中，新任务自行登记并回信 #1；定向消息 #2 收到回信 #3 和 ACK。脚本退出码 0，临时信箱已关闭；通过 App 任务工具确认完成后归档。证据保存在本机临时目录 `mailbox-live-session-r3Pli4/proof.json`。没有在正式主题中代替 Claude 发起新讨论。
+- 首次更新正式服务的进程重启命令被自动审批拒绝，未执行。之后观察到正式 Mailbox 已由新进程加载；按用户命令执行 `mailbox codex app connect` 成功，正式 `/api/codex/status` 返回 `reachable / desktop-app`，网页显示“Codex App · 已连接”并正确展示接入说明。
+- 正式数据库已备份到忽略提交的 `.mailbox/backups/before-desktop-reuse-20260910.db`；新服务加载后核对七张业务表，原有字段和记录内容哈希全部一致。新 App 接入信息仅存在服务内存，未写入数据库。仓库及 Codex、Claude 两处安装的 skill 内容一致且校验通过。
+
 ## Codex 创建服务启动与连接（2026-09-10）
 
 - 本次用户实测失败的原因是 4500 无监听，同时旧 Mailbox 后端对状态接口返回 404。网页现在提供“Codex 创建服务 → 启动并连接”，复用启动脚本的实际启动、握手与配置保存逻辑；不是仅恢复检测指示器。

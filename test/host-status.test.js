@@ -147,10 +147,10 @@ test("HTTP host status is independent of mailbox data and rechecks host availabi
   app.store.reserveSession(topic.id, { kind: "codex", as: "human", cwd: process.cwd() });
   const before = await client.request("/api/state");
   const session = app.store.session(topic.id, "codex");
-  assert.equal((await client.request("/api/codex/status")).status, "reachable");
+  assert.equal((await client.request("/api/codex/host/status")).status, "reachable");
   await until(() => host.server.clients.size === 0);
   await new Promise((r) => host.server.close(r));
-  assert.equal((await client.request("/api/codex/status")).status, "unreachable");
+  assert.equal((await client.request("/api/codex/host/status")).status, "unreachable");
   assert.deepEqual(await client.request("/api/state"), before);
   assert.deepEqual(app.store.session(topic.id, "codex"), session);
 });

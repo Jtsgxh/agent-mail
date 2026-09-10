@@ -9,14 +9,15 @@ import { HttpError, required, number } from "./store.js";
 
 // Session addresses and credentials belong to this service lifetime, never SQLite or public state.
 export class NativeRecipients {
-  constructor(store, url, changed) {
+  constructor(store, url, changed, codexApp) {
     this.store = store;
     this.url = url;
     this.changed = changed;
+    this.codexApp = codexApp;
     this.routes = new Map();
     this.stopping = false;
   }
-  async prepare(participant, input) {
+  async prepare(participant, input, { desktop = false } = {}) {
     if (!input || typeof input !== "object" || Array.isArray(input))
       throw new HttpError(400, "notification 必须是会话入口对象");
     if (!["codex", "claude"].includes(participant.kind))
@@ -30,6 +31,13 @@ export class NativeRecipients {
       target.token = required(input.token, "token", 16000);
     if (participant.kind === "codex") {
       target.thread = required(input.thread, "thread");
+      if (desktop) {
+        if (input.endpoint) throw new HttpError(409, "App 创建的任务不使用独立 App Server 地址");
+        try { this.codexApp.assertNewTarget(target.thread); }
+        catch (error) { throw new HttpError(409, error.message); }
+        target.transport = "desktop-app";
+        return target;
+      }
       if (input.endpoint) {
         let url;
         try {
@@ -142,7 +150,9 @@ export class NativeRecipients {
           id,
           this.url(),
         );
-        if (route.target.kind === "codex")
+        if (route.target.transport === "desktop-app")
+          await this.codexApp.send(route.target.thread, text, { signal });
+        else if (route.target.kind === "codex")
           await queueCodex(route.target.program, {
             ...route.target,
             text,

@@ -77,25 +77,24 @@ async function checkCodexService(start = false) {
   const button = $("#start-codex-service");
   const check = $("#check-codex-service");
   button.disabled = check.disabled = true;
-  let starting = false;
-  label.textContent = start ? "Codex 创建服务 · 启动连接中…" : "Codex 创建服务 · 检查中";
+  label.textContent = start ? "Codex App · 连接中…" : "Codex App · 检查中";
   label.dataset.status = "checking";
   $("#codex-service-error").hidden = true;
   try {
-    const host = start ? await api("/codex/start", {}) : await api("/codex/status");
-    const names = { reachable: "可用", unreachable: "未就绪", unconfigured: "未启动", invalid_config: "配置错误", starting: "启动连接中…" };
+    const host = start ? await api("/codex/connect", {}) : await api("/codex/status");
+    if (host.transport !== "desktop-app") throw new Error("信箱后端尚未加载 App 复用接口，请更新并重启 Mailbox 服务。");
+    const names = { reachable: "已连接", unreachable: "连接不可用", unconfigured: "未接入" };
     if (!names[host.status]) throw new Error("无法识别服务状态");
-    starting = host.status === "starting";
-    label.textContent = `Codex 创建服务 · ${names[host.status]}`;
+    label.textContent = `Codex App · ${names[host.status]}`;
     label.dataset.status = host.status;
-    $("#codex-service-address").textContent = host.endpoint ?? (starting ? "正在准备服务…" : "首次启动默认使用本机 4500 端口");
+    $("#codex-service-address").textContent = host.status === "reachable" ? "当前桌面 App 可接收创建请求" : "等待当前桌面 App 接入";
     $("#codex-service-error").textContent = host.error ?? "";
     $("#codex-service-error").hidden = !host.error;
     $("#codex-service-checked").textContent = `上次检测：${new Date(host.checked_at).toLocaleTimeString("zh-CN", { hour12: false })}`;
     button.hidden = host.status === "reachable";
-    if (start && host.status === "reachable") toast(host.reused ? "已连接现有 Codex 创建服务" : "Codex 创建服务已启动并连接");
+    if (start && host.status === "reachable") toast("已连接当前 Codex App");
   } catch (error) {
-    label.textContent = start ? "Codex 创建服务 · 启动失败" : "Codex 创建服务 · 状态未知";
+    label.textContent = start ? "Codex App · 连接失败" : "Codex App · 状态未知";
     label.dataset.status = "error";
     $("#codex-service-error").textContent = error.status === 404
       ? "信箱后端尚未加载服务管理接口，请重启 Mailbox 服务后再连接。"
@@ -105,7 +104,7 @@ async function checkCodexService(start = false) {
     button.hidden = false;
   } finally {
     checkingCodex = false;
-    button.disabled = starting;
+    button.disabled = false;
     check.disabled = false;
   }
 }

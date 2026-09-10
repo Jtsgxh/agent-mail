@@ -37,6 +37,8 @@ mailbox wait TOPIC --as ID [--after ID] [--timeout 60]
 mailbox bridge claude --as ID [--max-messages 20]
 mailbox bridge codex --as ID --endpoint ws://127.0.0.1:4500 --thread THREAD_ID [--max-turns 12]
 mailbox codex threads --endpoint ws://127.0.0.1:4500
+mailbox codex app connect
+mailbox codex app status
 
 正文支持 --body-file PATH 或 --stdin（与 --body 互斥）。
 所有普通命令输出 JSON；--json 可显式声明。失败输出 stderr，退出码 1。
@@ -45,7 +47,9 @@ mailbox codex threads --endpoint ws://127.0.0.1:4500
 connect 在目标 agent 会话内部执行，使用自身原生消息入口；--background 仅后台运行通知进程。
 Codex 使用 CODEX_THREAD_ID 或 --thread；Claude 使用自身导出的消息地址和 token。
 --agent-bin 指定目标 agent 程序；--list 查看参与者，--preview 只检查参数。
-session create 为 topic 创建独立会话；Codex 使用已配置的常驻 App Server，Claude 使用 --bg。
+session create 为 topic 创建独立会话；Codex 默认复用已接入的桌面 App，Claude 使用 --bg。
+codex app connect 在当前 Codex App 任务内执行，仅登记自身 App 入口；Claude 之后可直接创建。
+只有明确传 --endpoint 才使用独立 App Server，不会自动启动或回退到 4500。
 session create 成功仅表示新会话已登记收件入口；讨论结果查看 read，处理进度查看 ACK。
 Codex token 如有需要通过 MAILBOX_CODEX_TOKEN 环境变量提供。
 topic join 在目标会话中自动登记通知入口，无需 connect 或后台进程。
@@ -149,7 +153,14 @@ try {
     return matches[0].id;
   };
   let result;
-  if (p[0] === "session" && ["create", "info"].includes(p[1])) {
+  if (p[0] === "codex" && p[1] === "app" && ["connect", "status"].includes(p[2])) {
+    if (p[2] === "connect") {
+      const { appContext } = await import("../src/codex-app.js");
+      const context = appContext();
+      if (!context.pipe || !context.threadId) throw new Error("请在当前 Codex App 的任务内执行此命令；不接受手填或猜测其他任务的入口");
+      result = await client.request("/api/codex/connect", { context });
+    } else result = await client.request("/api/codex/status");
+  } else if (p[0] === "session" && ["create", "info"].includes(p[1])) {
     const { createSession, sessionPath } = await import("../src/sessions.js");
     const topic = requireValue("topic");
     result =

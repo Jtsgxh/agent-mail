@@ -1,7 +1,7 @@
 // Explicit live test: creates one disposable native session, then checks two mailbox replies.
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 import { startServer } from "../src/server.js";
@@ -10,9 +10,11 @@ import { createSession, sessionPath, codexHost } from "../src/sessions.js";
 import { agentCommand } from "../src/connect.js";
 import { CodexConnection } from "../src/codex.js";
 const exec = promisify(execFile);
-const kind = process.argv[2];
-if (!["claude", "codex"].includes(kind))
-  throw new Error("Usage: node scripts/smoke-sessions.js claude|codex");
+const mode = process.argv[2];
+const kind = mode === "codex-ws" ? "codex" : mode;
+if (!["claude", "codex", "codex-ws"].includes(mode) || (mode === "codex" && !process.argv[3]))
+  throw new Error("Usage: node scripts/smoke-sessions.js codex SAVED_APP_PROJECT_PATH | codex-ws | claude. Creates a real disposable task; desktop task must be archived in App after the test.");
+const legacyHost = mode === "codex-ws" ? await codexHost() : null;
 const cwd = await mkdtemp(join(tmpdir(), "mailbox-live-session-"));
 const app = await startServer({ port: 0, dbPath: join(cwd, "mailbox.db") });
 const client = new Client(app.url);
@@ -48,8 +50,8 @@ async function waitFor(text, seconds = 180) {
           messageCount: page.messages.length,
         }),
       );
-      if (kind === "codex") {
-        const host = await codexHost();
+      if (mode === "codex-ws") {
+        const host = legacyHost;
         const rpc = await new CodexConnection(
           host.endpoint,
           process.env.MAILBOX_CODEX_TOKEN,
@@ -79,7 +81,9 @@ try {
   session = await createSession(client, kind, {
     topic: topic.id,
     as: "human",
-    cwd,
+    cwd: mode === "codex" ? resolve(process.argv[3]) : cwd,
+    endpoint: legacyHost?.endpoint,
+    agentBin: legacyHost?.agentBin,
     timeout: 180,
   });
   console.log(
@@ -128,8 +132,8 @@ try {
 } finally {
   session ??= await client.request(sessionPath(topic.id, kind));
   if (session?.native_id) {
-    if (kind === "codex") {
-      const host = await codexHost();
+    if (mode === "codex-ws") {
+      const host = legacyHost;
       const rpc = await new CodexConnection(
         host.endpoint,
         process.env.MAILBOX_CODEX_TOKEN,
@@ -149,7 +153,7 @@ try {
       } finally {
         await rpc.close();
       }
-    } else {
+    } else if (kind === "claude") {
       const program = await agentCommand("claude");
       const agents = JSON.parse(
         (
@@ -177,7 +181,8 @@ try {
       phase: "cleanup",
       kind,
       cwd,
-      note: "本次测试记录保留在临时目录；共享 App Server 继续运行",
+      nativeId: session?.native_id,
+      note: mode === "codex" ? "临时信箱已关闭；请在当前 App 归档上述测试任务。测试记录保留在临时目录。" : "本次测试记录保留在临时目录；共享 App Server 继续运行",
     }),
   );
 }

@@ -87,6 +87,11 @@ export class Store {
     this.db.exec(
       "CREATE INDEX IF NOT EXISTS topics_project ON topics(project_id)",
     );
+    const sessionColumns = this.db.prepare("PRAGMA table_info(sessions)").all();
+    if (!sessionColumns.some((column) => column.name === "transport"))
+      this.db.exec("ALTER TABLE sessions ADD COLUMN transport TEXT NOT NULL DEFAULT 'native'");
+    if (!sessionColumns.some((column) => column.name === "launch_ref"))
+      this.db.exec("ALTER TABLE sessions ADD COLUMN launch_ref TEXT");
     // Preserve old per-message receipts while changing their key to message + recipient.
     this.db.exec("BEGIN");
     try {
@@ -131,7 +136,9 @@ export class Store {
         .get(topic, kind) ?? null
     );
   }
-  reserveSession(topic, { kind, as, cwd }) {
+  reserveSession(topic, { kind, as, cwd, transport = "native" }) {
+    if (!["native", "desktop-app"].includes(transport) || (transport === "desktop-app" && kind !== "codex"))
+      throw new HttpError(400, "会话传输类型无效");
     if (this.topic(topic).status !== "open")
       throw new HttpError(409, "只可为开放主题创建会话");
     this.member(topic, as);
@@ -150,9 +157,9 @@ export class Store {
       });
       this.db
         .prepare(
-          "INSERT INTO sessions(topic_id,kind,participant_id,requested_by,cwd) VALUES (?,?,?,?,?)",
+          "INSERT INTO sessions(topic_id,kind,participant_id,requested_by,cwd,transport) VALUES (?,?,?,?,?,?)",
         )
-        .run(topic, kind, participant.id, as, cwd);
+        .run(topic, kind, participant.id, as, cwd, transport);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
@@ -160,7 +167,7 @@ export class Store {
     }
     return this.session(topic, kind);
   }
-  updateSession(topic, kind, { nativeId, launchStatus, error = null }) {
+  updateSession(topic, kind, { nativeId, launchRef, launchStatus, error = null }) {
     const session = this.session(topic, kind);
     if (!session) throw new HttpError(404, "会话记录不存在");
     if (nativeId !== undefined) {
@@ -168,19 +175,33 @@ export class Store {
       if (session.native_id && session.native_id !== nativeId)
         throw new HttpError(409, "不能更换已绑定会话");
     }
+    if (launchRef !== undefined) {
+      launchRef = required(launchRef, "launchRef");
+      if (session.transport !== "desktop-app" || (session.launch_ref && session.launch_ref !== launchRef))
+        throw new HttpError(409, "不能更换 App 创建请求");
+    }
     if (!["reserved", "submitted", "uncertain"].includes(launchStatus))
       throw new HttpError(400, "launchStatus 无效");
     if (session.launch_status !== "reserved")
       throw new HttpError(409, "启动结果已记录，不可重新启动");
-    if (launchStatus === "submitted" && !(nativeId ?? session.native_id))
+    if (launchStatus === "submitted" && !(nativeId ?? session.native_id ?? launchRef ?? session.launch_ref))
       throw new HttpError(400, "缺少原生会话 ID");
     if (error !== null) error = required(error, "error", 2000);
     this.db
       .prepare(
-        "UPDATE sessions SET native_id=COALESCE(?,native_id),launch_status=?,error=? WHERE topic_id=? AND kind=?",
+        "UPDATE sessions SET native_id=COALESCE(?,native_id),launch_ref=COALESCE(?,launch_ref),launch_status=?,error=? WHERE topic_id=? AND kind=?",
       )
-      .run(nativeId ?? null, launchStatus, error, topic, kind);
+      .run(nativeId ?? null, launchRef ?? null, launchStatus, error, topic, kind);
     return this.session(topic, kind);
+  }
+  bindDesktopSession(topic, participant, thread) {
+    const session = this.session(topic, "codex");
+    if (!session || session.transport !== "desktop-app" || session.participant_id !== participant)
+      throw new HttpError(409, "此身份不是该主题的 App 创建任务");
+    thread = required(thread, "thread");
+    if (session.native_id && session.native_id !== thread)
+      throw new HttpError(409, "不能更换已绑定的 App 任务");
+    this.db.prepare("UPDATE sessions SET native_id=? WHERE topic_id=? AND kind='codex'").run(thread, topic);
   }
   project(id) {
     const project = this.db

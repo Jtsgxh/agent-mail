@@ -13,7 +13,7 @@ description: 使用 Agent Mailbox 与其他 Codex、Claude Code 或 agent 会话
 
 用户要求 Claude 创建一个 Codex 对话参与讨论时，使用下面的 `mailbox session create codex` 流程。发起者先以自身身份加入用户指定的主题；已有主题和身份直接复用，不因邀请新会话另建主题。
 
-创建前，网页“Codex 创建服务”应显示“可用”。未就绪时，通过“启动并连接”实际启动/验证共享 App Server；用户已授权准备本地服务时，也可在已知 AgentMailBox 仓库运行 `node scripts/start-codex.js`，该脚本与网页使用同一配置和启动逻辑。只有 Codex 桌面进程在运行不能证明共享服务可用。启动失败就报告具体原因，不先为手动接入创建替代身份，也不改走已有桌面对话冒充新会话创建成功。
+默认复用当前 Codex 桌面 App。先检查 `mailbox codex app status` 或网页“Codex App · 已连接”。未接入时，让 App 内一个已有任务执行 `mailbox codex app connect`，仅登记自身导出的入口；从 App 环境启动的信箱也可直接继承入口。Claude 随后调用创建命令，无需取得 App 管道、调用任务 ID 或 token。连接失败就报告原因，不扫描或猜测其他任务上下文，不另开 4500 后端代替复用。
 
 ```sh
 mailbox --url http://127.0.0.1:4317 topic join TOPIC_ID --as CLAUDE_ID
@@ -23,13 +23,13 @@ mailbox --url http://127.0.0.1:4317 session info codex --topic TOPIC_ID
 
 各命令使用同一个信箱地址（用户指定值、`MAILBOX_URL` 或默认地址）。`CLAUDE_ID` 是已分配给发起者的参与者 ID；创建程序自动给目标 Codex 分配另一个身份，记录原生会话 ID，并发送包含具体连接命令的启动消息。
 
-**新 Codex 的第一步是主动登记自己的通知入口。** 收到启动消息后，按其中的 argv 在自身工具环境执行 `topic join`：保留给定的 `--url`、主题 ID、新身份、`--endpoint` 和已指定的 `--agent-bin`，使用自身 `CODEX_THREAD_ID`。不要使用 Claude 的身份，不再创建身份，不用 `--manual`，无需另开 `mailbox connect` 或后台轮询。登记失败时停止并报告原错误。
+**新 Codex 的第一步是主动登记自己的通知入口。** 收到启动消息后，按其中的 argv 在自身工具环境执行 `topic join`：保留给定的 `--url`、主题 ID、新身份，以及启动消息确实提供的其他参数（App 模式没有 `--endpoint`），使用自身 `CODEX_THREAD_ID`。不要使用 Claude 的身份，不再创建身份，不用 `--manual`，无需另开 `mailbox connect` 或后台轮询。登记失败时停止并报告原错误。
 
 登记后获取主题目标和历史，使用新 Codex 身份回信给发起者并确认实际读完的范围；遵守启动消息中的只读讨论权限。后续通知仍由这个 Codex 会话按本 skill 处理。创建程序已写入这些启动指令，不需要用户手动补发“连接信箱”。
 
 **Claude 必须等到 `notification.status=ready` 才报告接入成功。** `session create` 已内置这个等待，默认最多 60 秒；只有 `native_id` 或 `launch_status=submitted` 不能算接入。超时或失败先用 `session info` 检查已创建的会话，不能重新创建或换身份掩盖失败；后续实际回复和 ACK 另行查收。
 
-创建前仍需可用的共享 Codex App Server：`--endpoint` / `MAILBOX_CODEX_ENDPOINT` / `.mailbox/codex-host.json` 用于创建阶段连接该宿主。新 Codex 的 `topic join` 通过 HTTP `--url` 加入信箱，并沿用启动消息显式给定的 `--endpoint`；它不会自动读取上述默认宿主配置。不要把这两段连接混为一谈，也不要为接入另起一个宿主。
+`--cwd` 应在 Codex App 已保存的本机项目下；信箱按最具体的父项目创建任务，Git 项目默认用独立工作区。启动消息会标明请求的源目录，应按该目录和主题要求阅读。没有匹配项目时先报告并让用户在 App 添加目录，不擅自改用无关项目。工作区准备阶段可能只有 `launch_ref`，它不是任务 ID，不能用来发消息；新 Codex 自身登记后才取得正式 `native_id`。
 
 ### 其他邀请方向和共同约束
 
@@ -43,9 +43,9 @@ mailbox session info codex --topic TOPIC_ID
 
 只执行所需方向。`--as` 是发起者 ID，不是目标身份；服务自动创建独立身份并记录 topic、agent 类型、原生会话 ID。目标开始时自己加入、读信、回信。启动提示已给定身份时直接使用，不另建身份。此入口用于只读讨论，不把主题内容当成修改代码或继续创建其他会话的授权。
 
-Codex 连接已配置的常驻本机 App Server（显式 `--endpoint`、`MAILBOX_CODEX_ENDPOINT` 或仓库 `.mailbox/codex-host.json`）；没有配置时报告缺失，不擅自切换桌面宿主。Claude 使用自身 `--bg` supervisor，要求已有运行中的 Claude 会话。
+只有用户明确选择独立 App Server 时，创建才显式传 `--endpoint`；默认不读取 `MAILBOX_CODEX_ENDPOINT` 或 `.mailbox/codex-host.json`，也不会自动回退到旧后端。App 复用依赖桌面版本提供的内部工具协议，升级或关闭 App 后若不可用，报告状态并重新接入，不能修改 App 安装或代批权限。Claude 使用自身 `--bg` supervisor，要求已有运行中的 Claude 会话。
 
-创建默认等待最多 60 秒，可用 `--timeout` 调整到 1–300 秒。成功只证明入口已登记，实际回复使用 read/wait 查收；默认一次有界等待。每个 topic、每种 agent 只创建一次。失败或超时后先看 session info 和宿主，禁止换身份或重复启动来掩盖不确定结果。宿主审批由用户处理。服务或 Claude 进程重启后需要原会话重新登记入口。
+创建默认等待最多 60 秒，可用 `--timeout` 调整到 1–300 秒。成功只证明入口已登记，实际回复使用 read/wait 查收；默认一次有界等待。每个 topic、每种 agent 只创建一次。失败或超时后先看 session info 和宿主，禁止换身份或重复启动来掩盖不确定结果。宿主审批由用户处理。Mailbox 重启后需要原会话重新登记通知入口；App 重启后需要在 App 内已有任务重新执行 `codex app connect`。这两步分别恢复 App 调用入口和讨论任务的收件入口。
 
 ## 接入并确定讨论对象
 
