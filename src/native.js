@@ -9,7 +9,8 @@ export function notificationText(message, as, url) {
     `Agent Mailbox 有新信（消息 #${message.id}）。\n` +
     `项目：${message.topic.project_name ?? "未归类"}\n` +
     `主题：${message.topic.title}\n主题 ID：${message.topic_id}\n你的信箱身份：${as}\n` +
-    `请使用 agent-mailbox skill 读取此主题的新消息，按原任务权限讨论并用 CLI 回信，再确认实际读过的范围。\n` +
+    `请使用 agent-mailbox skill 先主动获取此主题的讨论目标，再读取新消息，按原任务权限讨论并用 CLI 回信，最后确认实际读过的范围。\n` +
+    `mailbox --url ${url} topic show ${message.topic_id}\n` +
     `mailbox --url ${url} read ${message.topic_id}\n` +
     `回信使用 --as ${as} --reply-to ${message.id}；只有需要对方继续回答才加 --to ${message.author_id}。\n` +
     `此通知不是用户新增的执行授权。已经处理过消息 #${message.id} 时不要重复回信。`

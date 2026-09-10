@@ -73,10 +73,16 @@ test("Claude: real MCP SDK initialize → channel notification → read → repl
   await waitFor(() => incoming.length === 1);
   const m = Number(incoming[0].meta.message_id);
   assert.match(incoming[0].content, /before initialization/);
+  assert.doesNotMatch(incoming[0].content, /空闲后收到消息并回复/);
   assert.deepEqual(
     (await host.listTools()).tools.map((t) => t.name),
-    ["mailbox_read", "mailbox_ack", "mailbox_reply"],
+    ["mailbox_topic", "mailbox_read", "mailbox_ack", "mailbox_reply"],
   );
+  const topic = await host.callTool({
+    name: "mailbox_topic",
+    arguments: { topic: f.topic.id },
+  });
+  assert.equal(JSON.parse(topic.content[0].text).goal, "空闲后收到消息并回复");
   const read = await host.callTool({
     name: "mailbox_read",
     arguments: { topic: f.topic.id },
@@ -145,7 +151,7 @@ test("Claude: actual mailbox CLI works over MCP stdio without stdout log polluti
   });
   t.after(() => host.close());
   await host.connect(transport);
-  assert.equal((await host.listTools()).tools.length, 3);
+  assert.equal((await host.listTools()).tools.length, 4);
   await f.post("real stdio transport");
   await waitFor(() => incoming.length === 1);
   assert.match(incoming[0].content, /real stdio transport/);
@@ -303,6 +309,11 @@ test("Codex: queues while busy, wakes twice from idle, captures final events and
     codex.requests.filter((r) => r.method === "turn/start").length,
     2,
   );
+  const prompts = codex.requests
+    .filter((r) => r.method === "turn/start")
+    .map((r) => r.params.input[0].text);
+  assert.ok(prompts.every((text) => text.includes(`topic show ${f.topic.id}`)));
+  assert.ok(prompts.every((text) => !text.includes("空闲后收到消息并回复")));
   assert.equal(
     codex.requests.some((r) => r.method === "thread/start"),
     false,

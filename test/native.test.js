@@ -101,6 +101,8 @@ test("joining via actual CLI registers the session and server delivers directly 
   const call = JSON.parse((await readFile(f.calls, "utf8")).trim());
   assert.equal(call[0], "queue");
   assert.equal(call[2], "own-session");
+  assert.ok(call[4].includes(`topic show ${f.topic.id}`));
+  assert.ok(!call[4].includes("原会话自己读信和回信"));
   assert.equal(
     (await f.client.request(`/api/topics/${f.topic.id}/messages`)).messages
       .length,
@@ -212,6 +214,8 @@ test("Claude joins with its own credentials; direct server IPC does not disclose
   await until(() => frames?.length === 2);
   assert.deepEqual(frames[0], { type: "auth", token: "private-test-token" });
   assert.equal(frames[1].type, "user");
+  assert.ok(frames[1].message.content.includes(`topic show ${f.topic.id}`));
+  assert.ok(!frames[1].message.content.includes("原会话自己读信和回信"));
   const state = JSON.stringify(await f.client.request("/api/state"));
   assert.ok(!state.includes(address));
   assert.ok(!state.includes("private-test-token"));
@@ -316,6 +320,8 @@ test("Codex native notification only invokes queue, preserves messages and never
   assert.equal(call[0], "queue");
   assert.equal(call[2], "existing-session");
   assert.ok(call[4].includes(f.topic.id));
+  assert.ok(call[4].includes(`topic show ${f.topic.id}`));
+  assert.ok(!call[4].includes("原会话自己读信和回信"));
   assert.ok(!call.includes("app-server"));
   assert.ok(!call[4].includes("需要讨论"), "only a notice, not the peer body");
   const inbox = await f.client.request(`/api/inbox?as=${f.p.id}`);

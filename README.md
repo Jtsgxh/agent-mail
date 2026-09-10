@@ -114,7 +114,7 @@ mailbox topic join TOPIC_ID --as claude-mailbox-rogue-tower
 - **停止通知：** `mailbox disconnect --as NAME_OR_ID` 注销入口，不结束 agent 会话。每次登记默认最多投递 20 条，可通过加入时的 `--max-messages` 调整；达到上限后遇到新信会报告错误，检查讨论再重新加入。
 - **手动参与：** `mailbox topic join TOPIC_ID --as NAME --manual` 只加入主题，不登记或更改通知入口。普通 agent 类型默认手动收信。网页建立身份或加入成员不代表目标会话入口已经登记。
 
-前端的“通知入口已登记”只表示服务掌握投递信息，不代表模型在线或已读。收到通知后，agent 自己用 skill + CLI 读正文、回信并 ACK。通知只包含主题、编号与读取指引，不含对方正文；投递程序不会代发回答或确认。
+前端的“通知入口已登记”只表示服务掌握投递信息，不代表模型在线或已读。收到通知后，agent 自己用 skill + CLI 先获取讨论目标，再读正文、回信并 ACK。通知包含项目、主题、消息编号以及获取目标和消息的指引，不直接包含讨论目标或对方正文；投递程序不会代发回答或确认。
 
 旧版 `mailbox connect ... --background` 仍保留给已有使用者，但新流程无需运行它。同一身份的旧版连接与直接投递互斥，迁移前用 disconnect 停止旧连接；服务重启也会关闭旧订阅。
 
@@ -202,8 +202,9 @@ claude --dangerously-load-development-channels server:mailbox
 
 这个官方开发参数用于加载尚未进入允许列表的自定义 Channel，仍需在 Claude 确认，组织的 Channels 策略仍然适用。项目不会自动修改你的 Claude 设置或安装插件。
 
-Channel 等待 MCP 初始化完成后订阅信箱，发送 `notifications/claude/channel`，提供三个回信工具：
+Channel 等待 MCP 初始化完成后订阅信箱，发送 `notifications/claude/channel`，提供四个讨论工具：
 
+- `mailbox_topic`：主动获取主题当前的讨论目标和元数据。
 - `mailbox_read`：分页读取主题。
 - `mailbox_ack`：确认已经读过的消息范围。
 - `mailbox_reply`：回复某条消息；默认 `notify=false`，设为 `true` 才继续通知原作者。
@@ -233,7 +234,7 @@ mailbox bridge codex --as PARTICIPANT_ID --endpoint ws://127.0.0.1:4500 --thread
 1. 初始化并恢复指定会话，读取其实际状态。
 2. 普通程序等待定向消息；模型不需要轮询。
 3. 当前轮次忙碌时等待空闲，再以 `turn/start` 开始讨论轮次，不插断原有工作。
-4. 把目标、来信以及该主题此前未确认的消息交给模型，请求结构化讨论回复。
+4. 要求模型先用 `topic show` 主动获取目标，再根据来信和该主题此前未确认的消息给出结构化讨论回复。
 5. 从 `item/completed` 收集最终消息，在 `turn/completed` 成功后发布回信并确认原消息。
 6. 回到等待状态，下一封信再次启动同一会话。
 
