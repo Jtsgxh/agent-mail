@@ -49,7 +49,21 @@
     <div class="main-shell">
       <header class="topbar">
         <div>讨论信箱</div>
-        <span id="connection" class="connection">正在连接</span>
+        <div class="service-status">
+          <details id="codex-host-panel">
+            <summary id="codex-host-status" data-status="checking">Codex 宿主 · 检查中</summary>
+            <div class="host-status-menu">
+              <strong>默认 Codex 宿主</strong>
+              <p id="codex-host-address">正在读取配置…</p>
+              <p id="codex-host-error" class="host-error" hidden></p>
+              <p id="codex-host-checked" class="muted">尚未完成检测</p>
+              <button id="check-codex-host" class="secondary" type="button">重新检测</button>
+              <p class="muted">页面可见时每 30 秒检测一次。单独指定其他宿主的会话，以其自身入口为准；连接成功不代表模型在线或已读。</p>
+              <p id="codex-host-setup" hidden>在本机终端配置宿主：<code>node scripts/start-codex.js</code></p>
+            </div>
+          </details>
+          <span id="connection" class="connection">信箱正在连接</span>
+        </div>
       </header>
       <main>
         <section class="conversation">
@@ -155,6 +169,7 @@
             <div id="members" class="members">
               <p class="muted">创建主题后，邀请 agent 加入。</p>
             </div>
+            <p class="muted">Codex / Claude 加入时登记通知入口。已登记不代表模型在线或已读；Claude 不需要单独的 App Server。</p>
             <div id="join-existing" hidden>
               <select id="existing-participant" aria-label="已有参与者"></select
               ><button class="secondary" id="join-button">加入</button>

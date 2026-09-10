@@ -105,14 +105,14 @@ export class CodexConnection extends EventEmitter {
     this.pending.clear();
     this.emit("update");
   }
-  async connect() {
+  async connect(timeout) {
     try {
       if (this.socket) {
         await new Promise((resolve, reject) => {
           const timer = setTimeout(() => {
             this.socket.terminate();
             reject(new Error("连接 Codex 超时"));
-          }, 10000);
+          }, timeout ?? 10000);
           this.socket.once("open", () => {
             clearTimeout(timer);
             resolve();
@@ -123,13 +123,17 @@ export class CodexConnection extends EventEmitter {
           });
         });
       }
-      await this.call("initialize", {
-        clientInfo: {
-          name: "agent_mailbox",
-          version: "0.1.0",
-          title: "Agent Mailbox",
+      await this.call(
+        "initialize",
+        {
+          clientInfo: {
+            name: "agent_mailbox",
+            version: "0.1.0",
+            title: "Agent Mailbox",
+          },
         },
-      });
+        timeout,
+      );
       this.send({ method: "initialized" });
       return this;
     } catch (error) {
@@ -139,14 +143,14 @@ export class CodexConnection extends EventEmitter {
       throw error;
     }
   }
-  call(method, params) {
+  call(method, params, timeout = 30000) {
     if (this.dead) return Promise.reject(this.dead);
     return new Promise((resolve, reject) => {
       const id = this.nextId++;
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`${method} 请求超时`));
-      }, 30000);
+      }, timeout);
       this.pending.set(id, { resolve, reject, timer });
       this.send({ id, method, params });
     });

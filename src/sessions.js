@@ -14,16 +14,86 @@ export const codexHostFile = fileURLToPath(
   new URL("../.mailbox/codex-host.json", import.meta.url),
 );
 
-export async function codexHost() {
-  if (process.env.MAILBOX_CODEX_ENDPOINT)
-    return { endpoint: process.env.MAILBOX_CODEX_ENDPOINT };
+export async function codexHost({
+  env = process.env,
+  configPath = codexHostFile,
+} = {}) {
+  if (env.MAILBOX_CODEX_ENDPOINT)
+    return { endpoint: env.MAILBOX_CODEX_ENDPOINT };
   try {
-    return JSON.parse(await readFile(codexHostFile, "utf8"));
+    return JSON.parse(await readFile(configPath, "utf8"));
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
     throw new Error(
       "未配置 Codex App Server：先运行 node scripts/start-codex.js，或传 --endpoint / MAILBOX_CODEX_ENDPOINT",
+      { cause: error },
     );
+  }
+}
+
+export async function codexHostStatus({
+  env = process.env,
+  configPath = codexHostFile,
+  timeout = 3000,
+} = {}) {
+  let host;
+  try {
+    host = await codexHost({ env, configPath });
+  } catch (error) {
+    const missing = error.cause?.code === "ENOENT";
+    return {
+      status: missing ? "unconfigured" : "invalid_config",
+      endpoint: null,
+      checked_at: new Date().toISOString(),
+      error: missing
+        ? "尚未配置 Codex 宿主"
+        : "无法读取 Codex 宿主配置，请检查配置文件",
+    };
+  }
+  let endpoint;
+  try {
+    endpoint = new URL(host?.endpoint);
+    if (
+      endpoint.protocol !== "ws:" ||
+      !["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname) ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.search ||
+      endpoint.hash
+    )
+      throw new Error("invalid endpoint");
+  } catch {
+    return {
+      status: "invalid_config",
+      endpoint: null,
+      checked_at: new Date().toISOString(),
+      error: "Codex 宿主地址必须是本机 ws:// 地址，且不含凭据、查询参数或片段",
+    };
+  }
+  let rpc;
+  try {
+    rpc = new CodexConnection(endpoint.href, env.MAILBOX_CODEX_TOKEN);
+    await rpc.connect(timeout);
+    return {
+      status: "reachable",
+      endpoint: endpoint.href,
+      checked_at: new Date().toISOString(),
+      error: null,
+    };
+  } catch (error) {
+    let detail = error.message;
+    if (env.MAILBOX_CODEX_TOKEN)
+      detail = detail.replaceAll(env.MAILBOX_CODEX_TOKEN, "[redacted]");
+    return {
+      status: "unreachable",
+      endpoint: endpoint.href,
+      checked_at: new Date().toISOString(),
+      error: detail.slice(0, 1000),
+    };
+  } finally {
+    // A status probe owns only this connection, never a thread or host process.
+    await rpc?.close();
+    rpc?.socket?.terminate();
   }
 }
 

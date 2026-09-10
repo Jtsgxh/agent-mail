@@ -5,6 +5,7 @@ import { resolve, dirname } from "node:path";
 import { EventEmitter } from "node:events";
 import { Store, HttpError, number } from "./store.js";
 import { NativeRecipients } from "./notifications.js";
+import { codexHostStatus } from "./sessions.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const assets = new Map([
@@ -176,6 +177,8 @@ export async function startServer({
           node: process.execPath,
           cli: resolve(root, "bin/mailbox.js"),
         });
+      if (req.method === "GET" && path === "/api/codex/status")
+        return send(await codexHostStatus());
       if (req.method === "GET" && path === "/api/message-by-request") {
         store.participant(query.as);
         return send(store.byRequest(query.as, query.requestId));
