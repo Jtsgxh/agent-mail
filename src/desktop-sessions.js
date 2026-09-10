@@ -13,6 +13,7 @@ export async function launchDesktopSession(store, app, topic, input, { url, sign
   store.member(topic, as);
   const context = { ...app.context };
   const target = projectTarget(await app.projects({ signal, context }), cwd);
+  await app.prepareSidebar({ signal, context });
   signal.throwIfAborted();
   const session = store.reserveSession(topic, { kind: "codex", as, cwd, transport: "desktop-app" });
   changed();

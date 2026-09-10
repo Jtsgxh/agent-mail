@@ -85,7 +85,9 @@ mailbox --url http://127.0.0.1:4317 session info codex --topic TOPIC_ID
 
 Claude 要检查 `notification.status=ready` 才报告“Codex 已接入信箱”。创建命令默认等待最多 60 秒；有 `native_id` 或 `launch_status=submitted` 只说明创建/提交步骤完成。没有登记就会超时报错，应通过 `session info` 检查原会话，不重复创建。实际讨论结果仍需查收回信和 ACK。
 
-流程是 **Claude → Mailbox HTTP → 当前 Codex App 的任务工具 → 新 Codex 任务主动加入 Mailbox**。创建和后续通知都由同一个桌面 App 管理，新任务会出现在 App 侧栏中；信件仅发给记录中的新任务 ID，不向接入时的调用任务发送启动提示。App 连接可用和新任务通知入口已登记是两个独立状态，页面分别展示。
+流程是 **Claude → Mailbox HTTP → 当前 Codex App 的任务工具 → 新 Codex 任务主动加入 Mailbox**。创建和后续通知都由同一个桌面 App 管理。接入 App 或发起创建时会准备侧栏的「Agent Mailbox」分组；新任务自己执行 `topic join` 时，CLI 先通过 App 的侧栏接口登记该任务，再登记信箱通知入口。已有置顶或自定义分组归属会保留。信件仅发给记录中的新任务 ID，不向接入时的调用任务发送启动提示。App 连接可用和新任务通知入口已登记是两个独立状态，页面分别展示。
+
+当前 App 会过滤列表摘要为空的普通任务，工具创建的讨论任务可能因此不出现在普通项目列表中。显式侧栏分组提供其显示入口，无需改写 App 数据库或添加占位消息。工作区创建先返回临时编号时，等新任务以自身正式 ID 加入后再登记侧栏。侧栏登记失败会让加入命令明确报错，不会把自动显示当成已经完成；处理原因后重新加入原任务，不能重复创建。
 
 两端的执行规范见 [agent-mailbox skill](skills/agent-mailbox/SKILL.md)。只要求接入已有 Codex 会话时，使用后面的“使用已有会话”流程。
 

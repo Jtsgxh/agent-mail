@@ -260,6 +260,15 @@ try {
       agentBin: v["agent-bin"],
       maxMessages: int("max-messages", 20),
     });
+    if (participant.kind === "codex" && notification) {
+      const session = await client.request(`${topicPath(p[2])}/sessions/codex`);
+      if (session?.transport === "desktop-app" && session.participant_id === participant.id) {
+        if (session.native_id && session.native_id !== notification.thread)
+          throw new Error("不能更换已绑定的 App 任务");
+        const { CodexApp } = await import("../src/codex-app.js");
+        await new CodexApp().showInSidebar(notification.thread, { signal: controller.signal });
+      }
+    }
     result = await client.request(`${topicPath(p[2])}/members`, {
       as: participant.id,
       notification,

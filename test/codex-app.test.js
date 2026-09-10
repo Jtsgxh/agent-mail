@@ -32,6 +32,7 @@ async function fixture(t, mode = "join") {
   const pipe = process.platform === "win32" ? `\\\\.\\pipe\\mailbox-app-test-${randomUUID()}` : join(tmpdir(), `mailbox-app-${randomUUID()}.sock`);
   const caller = randomUUID(), nativeId = randomUUID(), clientId = randomUUID();
   const calls = [], connections = new Set(), jobs = [];
+  const sections = [];
   let client, topic, joinError;
   const fake = net.createServer((socket) => {
     connections.add(socket); socket.on("close", () => connections.delete(socket));
@@ -57,13 +58,27 @@ async function fixture(t, mode = "join") {
   };
   const handle = async (request, socket) => {
     if (request.method === "tools/cancel") return;
-    if (request.method === "tools/list") return send(socket, request, { tools: ["list_projects", "create_thread", "send_message_to_thread"].map((name) => ({ name, namespace: "codex_app" })) });
+    if (request.method === "tools/list") return send(socket, request, { tools: ["list_projects", "create_thread", "send_message_to_thread", "list_threads", "create_sidebar_section", "move_thread_to_sidebar_section"].map((name) => ({ name, namespace: "codex_app" })) });
     const p = request.params;
-    assert.equal(p.threadId, caller);
+    assert.ok(p.threadId === caller || (p.threadId === nativeId && ["list_threads", "move_thread_to_sidebar_section"].includes(p.tool)));
     assert.match(p.callId, /^mcp-call-/);
     assert.match(p.turnId, /^mcp-turn-/);
     if (p.tool === "list_projects") return send(socket, request, result({ projects: [{ projectKind: "local", hostId: "local", projectId: "saved-project", path: process.cwd(), isGitRepository: false }] }));
     if (p.tool === "send_message_to_thread") return send(socket, request, result({ threadId: mode === "wrong-delivery" ? "other" : p.arguments.threadId }));
+    if (p.tool === "list_threads") return send(socket, request, result(mode === "no-sections" ? {} : { sections }));
+    if (p.tool === "create_sidebar_section") {
+      const section = { sectionId: randomUUID(), name: p.arguments.name, itemKeys: [] };
+      sections.push(section);
+      return send(socket, request, result(section));
+    }
+    if (p.tool === "move_thread_to_sidebar_section") {
+      assert.equal(p.arguments.threadId, nativeId);
+      if (mode === "sidebar-fail") return send(socket, request, { success: false, contentItems: [] });
+      const section = sections.find((s) => s.sectionId === p.arguments.sectionId);
+      assert.ok(section);
+      section.itemKeys.push(`codex:thread:local:${nativeId}`);
+      return send(socket, request, result(p.arguments));
+    }
     assert.equal(p.tool, "create_thread");
     assert.deepEqual(p.arguments.target, { type: "project", projectId: "saved-project", environment: { type: "local" } });
     assert.equal(p.arguments.model, undefined);
@@ -76,8 +91,11 @@ async function fixture(t, mode = "join") {
     const line = p.arguments.prompt.split("\n").find((line) => line.startsWith("1. 首先"));
     const argv = JSON.parse(line.slice(line.indexOf("[")));
     assert.equal(argv.includes("--endpoint"), false);
-    const env = { ...process.env, CODEX_THREAD_ID: nativeId };
-    delete env.CODEX_APP_TOOLS_PIPE_PATH;
+    const env = { ...process.env, CODEX_THREAD_ID: nativeId, CODEX_APP_TOOLS_PIPE_PATH: pipe };
+    if (mode === "sidebar-fail") {
+      await assert.rejects(exec(argv[0], argv.slice(1), { env, windowsHide: true }), /Codex App 未确认/);
+      return;
+    }
     const joined = JSON.parse((await exec(argv[0], argv.slice(1), { env, windowsHide: true })).stdout);
     assert.equal(joined.notification.status, "ready");
     if (mode === "early-join") send(socket, request, result(response));
@@ -94,7 +112,7 @@ async function fixture(t, mode = "join") {
     await Promise.allSettled(jobs);
     if (joinError) throw joinError;
   });
-  return { app, client, topic, nativeId, caller, clientId, calls, env, pipe,
+  return { app, client, topic, nativeId, caller, clientId, calls, env, pipe, sections,
     options: { topic: topic.id, cwd: process.cwd(), as: "human", timeout: 2 } };
 }
 
@@ -126,6 +144,11 @@ for (const mode of ["join", "early-join", "pending"])
     assert.equal(session.launch_ref, mode === "pending" ? f.clientId : null);
     assert.equal(session.launch_status, "submitted");
     assert.equal(session.notification.status, "ready");
+    assert.ok(f.sections.some((section) => section.name === "Agent Mailbox" && section.itemKeys.includes(`codex:thread:local:${f.nativeId}`)));
+    const placement = f.calls.find((call) => call.params?.tool === "move_thread_to_sidebar_section");
+    assert.equal(placement.params.threadId, f.nativeId, "the new App task registers its own sidebar entry");
+    assert.equal(placement.params.arguments.threadId, f.nativeId);
+    assert.equal(f.calls.filter((call) => call.params?.tool === "create_sidebar_section").length, 1);
     const message = await f.client.request(`/api/topics/${f.topic.id}/messages`, { as: "human", to: session.participant_id, body: "后续问题", requestId: randomUUID() });
     await until(() => f.app.store.read(f.topic.id).messages[0]?.notified_at);
     const sent = f.calls.find((call) => call.params?.tool === "send_message_to_thread");
@@ -191,4 +214,38 @@ test("non-local App addresses and unsupported tool methods are rejected", async 
   const f = await fixture(t);
   assert.throws(() => appRequest({ pipe: "https://remote", threadId: f.caller }, "tools/list", {}), /本机管道/);
   await assert.rejects(new CodexApp({ env: f.env }).call("archive_anything", {}), /不支持/);
+});
+
+test("concurrent setup creates one group and reuses App's existing placement", async (t) => {
+  const f = await fixture(t);
+  const app = new CodexApp({ env: f.env });
+  const [one, two] = await Promise.all([app.prepareSidebar(), app.prepareSidebar()]);
+  assert.equal(one.sectionId, two.sectionId);
+  assert.equal(f.calls.filter((call) => call.params?.tool === "create_sidebar_section").length, 1);
+  f.sections.push({ sectionId: "user-chosen", name: "My tasks", itemKeys: [`codex:thread:local:${f.nativeId}`] });
+  assert.equal((await app.showInSidebar(f.nativeId)).sectionId, "user-chosen");
+  assert.equal(f.calls.some((call) => call.params?.tool === "move_thread_to_sidebar_section"), false);
+});
+
+test("missing sidebar support fails before creating a task or reserving an identity", async (t) => {
+  const f = await fixture(t, "no-sections");
+  await assert.rejects(createSession(f.client, "codex", f.options), /侧栏分组信息/);
+  assert.equal(f.app.store.session(f.topic.id, "codex"), null);
+  assert.equal(f.calls.some((call) => call.params?.tool === "create_thread"), false);
+});
+
+test("sidebar placement failure cannot report a newly joined task as ready", async (t) => {
+  const f = await fixture(t, "sidebar-fail");
+  await assert.rejects(createSession(f.client, "codex", { ...f.options, timeout: 1 }), /尚未确认加入/);
+  const session = await f.client.request(`/api/topics/${f.topic.id}/sessions/codex`);
+  assert.equal(session.native_id, f.nativeId);
+  assert.equal(session.notification, null);
+  await assert.rejects(createSession(f.client, "codex", f.options), /已有/);
+});
+
+test("joining without a prepared group fails explicitly and never creates duplicate groups", async (t) => {
+  const f = await fixture(t);
+  const app = new CodexApp({ env: f.env });
+  await assert.rejects(app.showInSidebar(f.nativeId), /codex app connect/);
+  assert.equal(f.calls.some((call) => call.params?.tool === "create_sidebar_section"), false);
 });

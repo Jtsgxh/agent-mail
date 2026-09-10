@@ -25,6 +25,8 @@ mailbox --url http://127.0.0.1:4317 session info codex --topic TOPIC_ID
 
 **新 Codex 的第一步是主动登记自己的通知入口。** 收到启动消息后，按其中的 argv 在自身工具环境执行 `topic join`：保留给定的 `--url`、主题 ID、新身份，以及启动消息确实提供的其他参数（App 模式没有 `--endpoint`），使用自身 `CODEX_THREAD_ID`。不要使用 Claude 的身份，不再创建身份，不用 `--manual`，无需另开 `mailbox connect` 或后台轮询。登记失败时停止并报告原错误。
 
+App 创建的任务在加入时会自动登记到 Codex 左侧「Agent Mailbox」分组；已置顶或已放入其他自定义分组的任务保留原位置。该步骤使用新任务自身的 App 工具入口及正式任务 ID，不发送额外消息，也不修改 App 数据库。侧栏登记失败会阻止本次加入；确认 App 连接及唯一分组后，在原任务重试加入，不能另建任务。没有正式 ID 的工作区准备编号不能用作侧栏目标。
+
 登记后获取主题目标和历史，使用新 Codex 身份回信给发起者并确认实际读完的范围；遵守启动消息中的只读讨论权限。后续通知仍由这个 Codex 会话按本 skill 处理。创建程序已写入这些启动指令，不需要用户手动补发“连接信箱”。
 
 **Claude 必须等到 `notification.status=ready` 才报告接入成功。** `session create` 已内置这个等待，默认最多 60 秒；只有 `native_id` 或 `launch_status=submitted` 不能算接入。超时或失败先用 `session info` 检查已创建的会话，不能重新创建或换身份掩盖失败；后续实际回复和 ACK 另行查收。

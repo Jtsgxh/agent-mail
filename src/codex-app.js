@@ -5,7 +5,11 @@ import { isAbsolute, relative, sep } from "node:path";
 
 const littleEndian = endianness() === "LE";
 const maxFrame = 8 * 1024 * 1024;
-const allowedTools = new Set(["list_projects", "create_thread", "send_message_to_thread"]);
+const allowedTools = new Set([
+  "list_projects", "create_thread", "send_message_to_thread",
+  "list_threads", "create_sidebar_section", "move_thread_to_sidebar_section",
+]);
+const sidebarName = "Agent Mailbox";
 
 // This is the installed desktop App's native tools protocol, not a TCP App Server.
 // Keep the real caller context; the App resolves it and applies its normal task permissions.
@@ -86,6 +90,7 @@ export function appRequest(context, method, params, { signal, timeout = 30000 } 
 export class CodexApp {
   constructor({ env = process.env } = {}) {
     this.context = appContext(env);
+    this.sidebarSetups = new Map();
   }
   async call(tool, args, options = {}) {
     if (!allowedTools.has(tool)) throw new Error("不支持的 Codex App 操作");
@@ -109,6 +114,47 @@ export class CodexApp {
     if (!Array.isArray(result?.projects)) throw new Error("Codex App 项目列表格式不兼容");
     return result.projects;
   }
+  async sidebarSections(options = {}) {
+    const result = await this.call("list_threads", { limit: 1 }, options);
+    if (!Array.isArray(result?.sections)) throw new Error("当前 Codex App 未提供侧栏分组信息");
+    return result.sections;
+  }
+  async prepareSidebar(options = {}) {
+    // Only setup/creation prepares a group. Joining reuses it, so simultaneous new
+    // tasks cannot each create a separate group in their own CLI processes.
+    const context = options.context ?? this.context;
+    options = { ...options, context };
+    if (this.sidebarSetups.has(context.pipe)) return this.sidebarSetups.get(context.pipe);
+    const task = (async () => {
+      const sections = await this.sidebarSections(options);
+      const matches = sections.filter((section) => section.name === sidebarName);
+      if (matches.length > 1) throw new Error("Codex App 有多个 Agent Mailbox 分组，请先保留一个明确的目标分组");
+      if (matches.length === 1) return matches[0];
+      const created = await this.call("create_sidebar_section", { name: sidebarName }, options);
+      if (typeof created?.sectionId !== "string" || !created.sectionId || created.name !== sidebarName)
+        throw new Error("Codex App 未确认创建侧栏分组，请检查 App，不要重复创建");
+      return created;
+    })();
+    this.sidebarSetups.set(context.pipe, task);
+    try { return await task; }
+    finally { if (this.sidebarSetups.get(context.pipe) === task) this.sidebarSetups.delete(context.pipe); }
+  }
+  async showInSidebar(thread, options = {}) {
+    if (typeof thread !== "string" || !thread) throw new Error("缺少正式 Codex 任务 ID");
+    const sections = await this.sidebarSections(options);
+    const key = `codex:thread:local:${thread}`;
+    // Preserve a placement the user has already chosen, including pinned tasks.
+    const existing = sections.find((section) => section.itemKeys?.includes(key));
+    if (existing) return { threadId: thread, hostId: "local", sectionId: existing.sectionId };
+    const matches = sections.filter((section) => section.name === sidebarName);
+    if (matches.length !== 1)
+      throw new Error("需要唯一的 Agent Mailbox 侧栏分组；请先在 App 任务中执行 mailbox codex app connect");
+    const sectionId = matches[0].sectionId;
+    const moved = await this.call("move_thread_to_sidebar_section", { threadId: thread, hostId: "local", sectionId }, options);
+    if (moved?.threadId !== thread || moved.hostId !== "local" || moved.sectionId !== sectionId)
+      throw new Error("Codex App 未确认任务的侧栏归属，请检查原任务，不要重新创建");
+    return moved;
+  }
   async probe(context) {
     validateContext(context);
     const tools = await appRequest(context, "tools/list", { threadStartKind: "all" }, { timeout: 5000 });
@@ -119,6 +165,7 @@ export class CodexApp {
   }
   async connect(context = this.context) {
     const result = await this.probe(context);
+    await this.prepareSidebar({ context });
     this.context = { pipe: context.pipe, threadId: context.threadId };
     return result;
   }
