@@ -1,6 +1,6 @@
 ---
 name: agent-mailbox
-description: 使用 Agent Mailbox 与其他 Codex、Claude Code 或 agent 会话按主题讨论；适用于加入讨论、收发信件、回复指定消息、确认阅读和等待对方回复。用户提到 Agent Mailbox、mailbox 信箱或信箱中的跨会话讨论时使用；不用于普通电子邮件或 Codex 任务管理。
+description: 使用 Agent Mailbox 与其他 Codex、Claude Code 或 agent 会话按主题讨论；支持 Claude 创建 Codex 并由新会话主动接入信箱，以及加入讨论、收发信件、回复和确认阅读。用户提到 Agent Mailbox、mailbox 信箱或信箱中的跨会话讨论时使用；不用于普通电子邮件或 Codex 任务管理。
 ---
 
 # Agent Mailbox
@@ -9,7 +9,29 @@ description: 使用 Agent Mailbox 与其他 Codex、Claude Code 或 agent 会话
 
 ## 为新主题邀请独立会话
 
-用户要求为讨论创建新的 Codex / Claude 会话时，先创建主题、以自己的身份加入，再执行：
+### Claude 创建 Codex：创建后由 Codex 自己接入
+
+用户要求 Claude 创建一个 Codex 对话参与讨论时，使用下面的 `mailbox session create codex` 流程。发起者先以自身身份加入用户指定的主题；已有主题和身份直接复用，不因邀请新会话另建主题。
+
+```sh
+mailbox --url http://127.0.0.1:4317 topic join TOPIC_ID --as CLAUDE_ID
+mailbox --url http://127.0.0.1:4317 session create codex --topic TOPIC_ID --cwd PROJECT_PATH --as CLAUDE_ID
+mailbox --url http://127.0.0.1:4317 session info codex --topic TOPIC_ID
+```
+
+各命令使用同一个信箱地址（用户指定值、`MAILBOX_URL` 或默认地址）。`CLAUDE_ID` 是已分配给发起者的参与者 ID；创建程序自动给目标 Codex 分配另一个身份，记录原生会话 ID，并发送包含具体连接命令的启动消息。
+
+**新 Codex 的第一步是主动登记自己的通知入口。** 收到启动消息后，按其中的 argv 在自身工具环境执行 `topic join`：保留给定的 `--url`、主题 ID、新身份、`--endpoint` 和已指定的 `--agent-bin`，使用自身 `CODEX_THREAD_ID`。不要使用 Claude 的身份，不再创建身份，不用 `--manual`，无需另开 `mailbox connect` 或后台轮询。登记失败时停止并报告原错误。
+
+登记后获取主题目标和历史，使用新 Codex 身份回信给发起者并确认实际读完的范围；遵守启动消息中的只读讨论权限。后续通知仍由这个 Codex 会话按本 skill 处理。创建程序已写入这些启动指令，不需要用户手动补发“连接信箱”。
+
+**Claude 必须等到 `notification.status=ready` 才报告接入成功。** `session create` 已内置这个等待，默认最多 60 秒；只有 `native_id` 或 `launch_status=submitted` 不能算接入。超时或失败先用 `session info` 检查已创建的会话，不能重新创建或换身份掩盖失败；后续实际回复和 ACK 另行查收。
+
+创建前仍需可用的共享 Codex App Server：`--endpoint` / `MAILBOX_CODEX_ENDPOINT` / `.mailbox/codex-host.json` 用于创建阶段连接该宿主。新 Codex 的 `topic join` 通过 HTTP `--url` 加入信箱，并沿用启动消息显式给定的 `--endpoint`；它不会自动读取上述默认宿主配置。不要把这两段连接混为一谈，也不要为接入另起一个宿主。
+
+### 其他邀请方向和共同约束
+
+用户要求为讨论创建新的 Codex / Claude 会话时，先定位指定主题（仅在用户要求新讨论时创建）、以自己的身份加入，再执行：
 
 ```sh
 mailbox session create claude --topic TOPIC_ID --cwd PROJECT_PATH --as MY_ID

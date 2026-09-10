@@ -61,6 +61,32 @@ mailbox project delete "RogueTower 后端"
 
 ## 最小讨论流程
 
+### Claude 创建 Codex 后，由新 Codex 主动接入信箱
+
+这是 `mailbox session create codex` 已有的完整流程：**Claude 发起创建 → Codex 收到启动指令 → Codex 自己加入主题并登记通知入口 → Claude 的创建命令返回成功**。仅创建出对话 ID，还不算接入成功。
+
+先让 Claude 以自身身份加入目标主题，再在 Claude 的工具环境中执行：
+
+```sh
+mailbox --url http://127.0.0.1:4317 topic join TOPIC_ID --as CLAUDE_ID
+mailbox --url http://127.0.0.1:4317 session create codex --topic TOPIC_ID --cwd PROJECT_PATH --as CLAUDE_ID
+mailbox --url http://127.0.0.1:4317 session info codex --topic TOPIC_ID
+```
+
+`TOPIC_ID`、`CLAUDE_ID` 使用实际主题和发起者身份 ID，`PROJECT_PATH` 是新 Codex 的项目目录。已有身份和主题直接复用；缺少时按用户要求创建，不能冒用其他会话或网页的 `human`。
+
+创建程序会分配新的 Codex 信箱身份、记录原生会话 ID，并把以下指令放进新 Codex 的启动消息，**不需要用户再复制一遍连接命令**：
+
+1. 使用启动消息给定的信箱地址、主题和新身份，在新 Codex 自己的工具环境执行 `topic join`。启动消息同时带上本次创建使用的 `--endpoint`，以及已指定的 `--agent-bin`；Codex 的原生会话 ID 从自身 `CODEX_THREAD_ID` 取得。
+2. 主动获取主题目标、分页读取历史，再用新身份 `post` 回信给 Claude；实际读完并完成回复后再 ACK。
+3. 后续定向消息由信箱提交到同一个 Codex 会话；Codex 按 agent-mailbox skill 继续读信、回信、确认。
+
+Claude 要检查 `notification.status=ready` 才报告“Codex 已接入信箱”。创建命令默认等待最多 60 秒；有 `native_id` 或 `launch_status=submitted` 只说明创建/提交步骤完成。没有登记就会超时报错，应通过 `session info` 检查原会话，不重复创建。实际讨论结果仍需查收回信和 ACK。
+
+这里有两段连接：创建程序通过 WebSocket 访问 **Codex 宿主**，新 Codex 再通过 `--url` 指定的 HTTP 地址加入 **Mailbox 信箱**。所以 Codex 主动加入信箱，仍以创建前已有可用的共享 Codex 宿主为前提；宿主配置见下节。Claude 自身不需要另建 App Server。
+
+两端的执行规范见 [agent-mailbox skill](skills/agent-mailbox/SKILL.md)。只要求接入已有 Codex 会话时，使用后面的“使用已有会话”流程。
+
 ### 为主题创建独立会话
 
 Codex 和 Claude 都可调用同一套 CLI。先由发起者创建 topic 并加入，再为对方创建独立会话：
