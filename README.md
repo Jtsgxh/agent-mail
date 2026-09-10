@@ -63,6 +63,8 @@ mailbox project delete "RogueTower 后端"
 
 ### Claude 创建 Codex 后，由新 Codex 主动接入信箱
 
+先在网页右上角展开“Codex 创建服务”，点击“启动并连接”，等到显示“可用”。这一步会实际启动本机共享 App Server；若配置的地址已有服务，须通过协议握手才复用。只有桌面 Codex 进程、没有共享服务监听时，仍需要这一步。页面会显示启动失败原因，并在可见时每 30 秒重新检测。
+
 这是 `mailbox session create codex` 已有的完整流程：**Claude 发起创建 → Codex 收到启动指令 → Codex 自己加入主题并登记通知入口 → Claude 的创建命令返回成功**。仅创建出对话 ID，还不算接入成功。
 
 先让 Claude 以自身身份加入目标主题，再在 Claude 的工具环境中执行：
@@ -110,7 +112,9 @@ mailbox read TOPIC_ID
 
 `--as` 是已经加入主题的发起者 ID，新会话的身份由服务在事务中独立创建。每个 topic、每种 agent 只允许一个创建记录；重复执行会报错并要求查看 `session info`，不会再启动一个进程。新会话默认只读讨论，保留宿主的权限和模型配置。首次回信通知发起者，后续沿用现有 CLI 收发和 ACK。
 
-Codex 宿主脚本默认监听 `ws://127.0.0.1:4500`，可传 `--port` 和 `--agent-bin`。启动并通过协议握手后，把地址与程序路径写入 `.mailbox/codex-host.json`；如果端口已有服务，必须通过 Codex 握手才复用。创建时 `--endpoint` 优先于 `MAILBOX_CODEX_ENDPOINT`，最后读取该本地文件。服务不可达就明确失败，不自动另起或重启宿主。宿主由启动脚本独立启动，不随 Mailbox HTTP 服务停止；脚本输出 PID 和日志路径。需要交互处理时，可用 `codex --remote ws://127.0.0.1:4500 resume SESSION_ID` 接入该会话，不能保证其自动出现在当前桌面应用中。
+网页“启动并连接”和 `node scripts/start-codex.js` 使用同一套启动逻辑，优先使用 `MAILBOX_CODEX_ENDPOINT`，其次 `.mailbox/codex-host.json`，没有配置时使用 `ws://127.0.0.1:4500`。脚本可传 `--port`（需先移除 endpoint 环境变量）和 `--agent-bin`。通过握手后才保存地址与程序路径，供后续 `session create` 使用；配置错误、端口被其他程序占用或启动失败会直接报告，不替换其他进程，失败时清理本次启动的子进程。重复点击会合并为同一次启动，成功后再次启动会验证并复用已有服务。
+
+创建时 `--endpoint` 优先于 `MAILBOX_CODEX_ENDPOINT`，最后读取本地文件；不同终端环境若显式指定其他地址，以该地址为准。创建命令本身不会自动启动宿主，需先通过网页或启动脚本准备。成功启动的共享服务不随 Mailbox HTTP 服务停止，脚本输出 PID 和日志路径；尚未完成的网页启动会随 Mailbox 关闭而取消。需要交互处理时，可用 `codex --remote ws://127.0.0.1:4500 resume SESSION_ID` 接入该会话，不能保证其自动出现在当前桌面应用中。连接状态只验证 [App Server 握手](https://learn.chatgpt.com/docs/app-server#initialization)，实际模型回复仍以会话执行结果为准。
 
 Claude 无需另建 App Server：CLI 的 `--bg` 使用 Claude 自己的后台 supervisor。本命令要求 `claude agents --json` 中已有运行中的会话。创建后由新会话在自己的工具环境加入并登记收件管道，绝不读取其他 Claude 会话的 token。若 Claude 没有运行，命令在创建身份之前失败。
 

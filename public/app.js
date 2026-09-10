@@ -29,6 +29,7 @@ let refreshId = 0,
 let sending = false,
   pendingPost = null;
 const drafts = new Map();
+let checkingCodex = false;
 
 async function api(path, body, method = body === undefined ? "GET" : "POST") {
   const res = await fetch("/api" + path, {
@@ -69,6 +70,50 @@ function guard(fn) {
     }
   };
 }
+async function checkCodexService(start = false) {
+  if (checkingCodex) return;
+  checkingCodex = true;
+  const label = $("#codex-service-status");
+  const button = $("#start-codex-service");
+  const check = $("#check-codex-service");
+  button.disabled = check.disabled = true;
+  let starting = false;
+  label.textContent = start ? "Codex 创建服务 · 启动连接中…" : "Codex 创建服务 · 检查中";
+  label.dataset.status = "checking";
+  $("#codex-service-error").hidden = true;
+  try {
+    const host = start ? await api("/codex/start", {}) : await api("/codex/status");
+    const names = { reachable: "可用", unreachable: "未就绪", unconfigured: "未启动", invalid_config: "配置错误", starting: "启动连接中…" };
+    if (!names[host.status]) throw new Error("无法识别服务状态");
+    starting = host.status === "starting";
+    label.textContent = `Codex 创建服务 · ${names[host.status]}`;
+    label.dataset.status = host.status;
+    $("#codex-service-address").textContent = host.endpoint ?? (starting ? "正在准备服务…" : "首次启动默认使用本机 4500 端口");
+    $("#codex-service-error").textContent = host.error ?? "";
+    $("#codex-service-error").hidden = !host.error;
+    $("#codex-service-checked").textContent = `上次检测：${new Date(host.checked_at).toLocaleTimeString("zh-CN", { hour12: false })}`;
+    button.hidden = host.status === "reachable";
+    if (start && host.status === "reachable") toast(host.reused ? "已连接现有 Codex 创建服务" : "Codex 创建服务已启动并连接");
+  } catch (error) {
+    label.textContent = start ? "Codex 创建服务 · 启动失败" : "Codex 创建服务 · 状态未知";
+    label.dataset.status = "error";
+    $("#codex-service-error").textContent = error.status === 404
+      ? "信箱后端尚未加载服务管理接口，请重启 Mailbox 服务后再连接。"
+      : error.message;
+    $("#codex-service-error").hidden = false;
+    $("#codex-service-checked").textContent = "本次操作未完成";
+    button.hidden = false;
+  } finally {
+    checkingCodex = false;
+    button.disabled = starting;
+    check.disabled = false;
+  }
+}
+$("#start-codex-service").onclick = () => checkCodexService(true);
+$("#check-codex-service").onclick = () => checkCodexService();
+setInterval(() => { if (!document.hidden) checkCodexService(); }, 30000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkCodexService(); });
+
 const date = (value) =>
   new Date(value).toLocaleString("zh-CN", {
     month: "2-digit",
@@ -625,6 +670,7 @@ const events = new EventSource("/api/events");
 events.onopen = () => {
   $("#connection").textContent = "信箱服务已连接";
   $("#connection").classList.remove("offline");
+  checkCodexService();
 };
 events.onerror = () => {
   $("#connection").textContent = "信箱连接中断，正在重连";
@@ -638,3 +684,4 @@ events.addEventListener("change", () => {
   );
 });
 refresh().catch((e) => toast(e.message, true));
+checkCodexService();

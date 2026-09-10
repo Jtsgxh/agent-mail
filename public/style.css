@@ -324,6 +324,36 @@ a {
 .connection.offline:before {
   background: #bd8d57;
 }
+.service-status, .codex-service-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+#codex-service-panel { position: relative; }
+#codex-service-status { cursor: pointer; white-space: nowrap; color: #687566; }
+#codex-service-status[data-status="reachable"] { color: #295d41; }
+#codex-service-status[data-status="error"],
+#codex-service-status[data-status="unreachable"],
+#codex-service-status[data-status="invalid_config"],
+.service-error { color: #a63535; }
+.codex-service-menu {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 30;
+  width: 350px;
+  max-width: calc(100vw - 32px);
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 8px 24px #26392f20;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 580px) {
+  .service-status { flex-direction: column; align-items: flex-end; gap: 4px; }
+}
 main {
   display: flex;
   flex: 1;

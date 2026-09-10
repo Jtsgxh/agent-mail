@@ -13,6 +13,8 @@ description: 使用 Agent Mailbox 与其他 Codex、Claude Code 或 agent 会话
 
 用户要求 Claude 创建一个 Codex 对话参与讨论时，使用下面的 `mailbox session create codex` 流程。发起者先以自身身份加入用户指定的主题；已有主题和身份直接复用，不因邀请新会话另建主题。
 
+创建前，网页“Codex 创建服务”应显示“可用”。未就绪时，通过“启动并连接”实际启动/验证共享 App Server；用户已授权准备本地服务时，也可在已知 AgentMailBox 仓库运行 `node scripts/start-codex.js`，该脚本与网页使用同一配置和启动逻辑。只有 Codex 桌面进程在运行不能证明共享服务可用。启动失败就报告具体原因，不先为手动接入创建替代身份，也不改走已有桌面对话冒充新会话创建成功。
+
 ```sh
 mailbox --url http://127.0.0.1:4317 topic join TOPIC_ID --as CLAUDE_ID
 mailbox --url http://127.0.0.1:4317 session create codex --topic TOPIC_ID --cwd PROJECT_PATH --as CLAUDE_ID

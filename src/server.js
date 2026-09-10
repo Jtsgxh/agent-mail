@@ -6,6 +6,7 @@ import { EventEmitter } from "node:events";
 import { Store, HttpError, number } from "./store.js";
 import { NativeRecipients } from "./notifications.js";
 import { codexHostStatus } from "./sessions.js";
+import { startCodexHost } from "../scripts/start-codex.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const assets = new Map([
@@ -25,6 +26,7 @@ const assets = new Map([
 export async function startServer({
   port = 4317,
   dbPath = resolve(root, ".mailbox/mailbox.db"),
+  codexHostOptions,
 } = {}) {
   const store = new Store(dbPath);
   const changes = new EventEmitter();
@@ -32,6 +34,8 @@ export async function startServer({
   const streams = new Set();
   const bridges = new Map();
   const bridgeStreams = new Map();
+  const codexStartup = new AbortController();
+  let codexStarting = null;
   const changed = () => {
     changes.emit("change");
     recipients.dispatch();
@@ -178,7 +182,20 @@ export async function startServer({
           cli: resolve(root, "bin/mailbox.js"),
         });
       if (req.method === "GET" && path === "/api/codex/status")
-        return send(await codexHostStatus());
+        return send(codexStarting
+          ? { status: "starting", endpoint: null, error: null, checked_at: new Date().toISOString() }
+          : await codexHostStatus(codexHostOptions));
+      if (req.method === "POST" && path === "/api/codex/start") {
+        if (codexStartup.signal.aborted) throw new HttpError(503, "信箱服务正在关闭");
+        codexStarting ??= startCodexHost({ ...codexHostOptions, signal: codexStartup.signal })
+          .catch((error) => {
+            const token = (codexHostOptions?.env ?? process.env).MAILBOX_CODEX_TOKEN;
+            const detail = token ? error.message.replaceAll(token, "[redacted]") : error.message;
+            throw new HttpError(502, detail.slice(0, 2000));
+          })
+          .finally(() => { codexStarting = null; });
+        return send(await codexStarting);
+      }
       if (req.method === "GET" && path === "/api/message-by-request") {
         store.participant(query.as);
         return send(store.byRequest(query.as, query.requestId));
@@ -362,6 +379,8 @@ export async function startServer({
     store,
     url: `http://127.0.0.1:${server.address().port}`,
     async close() {
+      codexStartup.abort(new Error("信箱服务停止，取消尚未完成的 Codex 启动"));
+      await codexStarting?.catch(() => {});
       await recipients.close();
       for (const stream of streams) stream.end();
       await new Promise((ok, fail) => {
