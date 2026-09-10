@@ -109,39 +109,12 @@ a {
   margin-top: 5px;
   color: #7b8c77;
 }
-.workspace {
-  border: 1px solid #dfe5d8;
-  padding: 14px 12px;
-  border-radius: 9px;
-  display: flex;
-  gap: 11px;
-  align-items: center;
-  margin-bottom: 34px;
-  font-size: 12px;
-  font-weight: 600;
-}
-.workspace-icon {
-  background: #e0e8d9;
-  padding: 9px;
-  border-radius: 6px;
-}
-.workspace small {
-  display: block;
-  font-size: 8px;
-  letter-spacing: 1.3px;
-  color: #8a9587;
-  margin-top: 5px;
-}
-.local-dot,
 .connection:before {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: #609568;
   display: inline-block;
-}
-.local-dot {
-  margin-left: auto;
 }
 .section-label {
   font-size: 11px;
@@ -337,13 +310,6 @@ a {
   padding: 0 34px;
   font-size: 11px;
   background: #fcfcfa;
-}
-.breadcrumb {
-  color: #939d91;
-}
-.slash {
-  margin: 0 12px;
-  color: #c4cabe;
 }
 .connection {
   font-size: 10px;
@@ -1024,12 +990,6 @@ dialog .primary {
   .brand small {
     font-size: 6px;
   }
-  .workspace {
-    padding: 10px 7px;
-  }
-  .workspace small {
-    font-size: 6px;
-  }
   .welcome {
     min-height: 65vh;
   }
@@ -1051,7 +1011,6 @@ dialog .primary {
   .brand {
     margin: 0 0 16px;
   }
-  .workspace,
   .sidebar > .section-label:not(.project-heading),
   .sidebar-bottom,
   .search,
