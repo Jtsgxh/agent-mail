@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { CodexApp, appRequest, projectTarget } from "../src/codex-app.js";
 import { startServer } from "../src/server.js";
 import { Client } from "../src/client.js";
-import { createSession } from "../src/sessions.js";
+import { createCodexSession } from "../src/sessions.js";
 
 const exec = promisify(execFile);
 const le = endianness() === "LE";
@@ -138,7 +138,7 @@ test("missing App registration never falls back to configured WS host", async ()
 for (const mode of ["join", "early-join", "pending"])
   test(`App create ${mode}: own registration binds the final ID and later mail targets only the new task`, async (t) => {
     const f = await fixture(t, mode);
-    const session = await createSession(f.client, "codex", f.options);
+    const session = await createCodexSession(f.client, f.options);
     assert.equal(session.transport, "desktop-app");
     assert.equal(session.native_id, f.nativeId);
     assert.equal(session.launch_ref, mode === "pending" ? f.clientId : null);
@@ -157,7 +157,7 @@ for (const mode of ["join", "early-join", "pending"])
     assert.equal(f.app.store.read(f.topic.id).messages[0].ack_at, null);
     await assert.rejects(f.client.request(`/api/topics/${f.topic.id}/members`, { as: session.participant_id, notification: { thread: f.caller } }), /调用任务/);
     await assert.rejects(f.client.request(`/api/topics/${f.topic.id}/members`, { as: session.participant_id, notification: { thread: randomUUID() } }), /不能更换/);
-    await assert.rejects(createSession(f.client, "codex", f.options), /已有/);
+    await assert.rejects(createCodexSession(f.client, f.options), /已有/);
     assert.equal(f.calls.filter((call) => call.params?.tool === "create_thread").length, 1);
   });
 
@@ -172,13 +172,13 @@ test("Claude-side CLI needs no App environment and still uses server's connected
 for (const mode of ["failed-turn", "caller", "nojoin"])
   test(`App create ${mode}: failure retains one record and cannot become false readiness`, async (t) => {
     const f = await fixture(t, mode);
-    await assert.rejects(createSession(f.client, "codex", { ...f.options, timeout: 1 }));
+    await assert.rejects(createCodexSession(f.client, { ...f.options, timeout: 1 }));
     const session = await f.client.request(`/api/topics/${f.topic.id}/sessions/codex`);
     assert.equal(session.notification, null);
     assert.equal(session.launch_status, mode === "nojoin" ? "submitted" : "uncertain");
     assert.notEqual(session.native_id, f.caller);
     if (mode === "failed-turn") assert.equal(session.native_id, f.nativeId);
-    await assert.rejects(createSession(f.client, "codex", f.options), /已有/);
+    await assert.rejects(createCodexSession(f.client, f.options), /已有/);
     assert.equal(f.calls.filter((call) => call.params?.tool === "create_thread").length, 1);
   });
 
@@ -196,7 +196,7 @@ test("concurrent launch, abort and topic deletion never recreate a task or resur
 
 test("delivery acknowledgement must name the bound new task", async (t) => {
   const f = await fixture(t, "wrong-delivery");
-  const session = await createSession(f.client, "codex", f.options);
+  const session = await createCodexSession(f.client, f.options);
   await f.client.request(`/api/topics/${f.topic.id}/messages`, { as: "human", to: session.participant_id, body: "test", requestId: randomUUID() });
   await until(() => f.app.store.read(f.topic.id).messages[0]?.recipients[0]?.error);
   assert.equal(f.app.store.read(f.topic.id).messages[0].notified_at, null);
@@ -229,18 +229,18 @@ test("concurrent setup creates one group and reuses App's existing placement", a
 
 test("missing sidebar support fails before creating a task or reserving an identity", async (t) => {
   const f = await fixture(t, "no-sections");
-  await assert.rejects(createSession(f.client, "codex", f.options), /侧栏分组信息/);
+  await assert.rejects(createCodexSession(f.client, f.options), /侧栏分组信息/);
   assert.equal(f.app.store.session(f.topic.id, "codex"), null);
   assert.equal(f.calls.some((call) => call.params?.tool === "create_thread"), false);
 });
 
 test("sidebar placement failure cannot report a newly joined task as ready", async (t) => {
   const f = await fixture(t, "sidebar-fail");
-  await assert.rejects(createSession(f.client, "codex", { ...f.options, timeout: 1 }), /尚未确认加入/);
+  await assert.rejects(createCodexSession(f.client, { ...f.options, timeout: 1 }), /尚未确认加入/);
   const session = await f.client.request(`/api/topics/${f.topic.id}/sessions/codex`);
   assert.equal(session.native_id, f.nativeId);
   assert.equal(session.notification, null);
-  await assert.rejects(createSession(f.client, "codex", f.options), /已有/);
+  await assert.rejects(createCodexSession(f.client, f.options), /已有/);
 });
 
 test("joining without a prepared group fails explicitly and never creates duplicate groups", async (t) => {

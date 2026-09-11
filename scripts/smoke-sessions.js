@@ -4,12 +4,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { startServer } from "../src/server.js";
 import { Client } from "../src/client.js";
-import { createSession, sessionPath, codexHost } from "../src/sessions.js";
+import { createCodexSession, codexSessionPath, codexHost } from "../src/sessions.js";
 import { CodexConnection } from "../src/codex.js";
 const mode = process.argv[2];
-const kind = mode === "codex-ws" ? "codex" : mode;
-if (!["claude", "codex", "codex-ws"].includes(mode) || (mode === "codex" && !process.argv[3]))
-  throw new Error("Usage: node scripts/smoke-sessions.js codex SAVED_APP_PROJECT_PATH | codex-ws | claude. Creates a real disposable task; desktop task must be archived in App after the test.");
+const kind = "codex";
+if (!["codex", "codex-ws"].includes(mode) || (mode === "codex" && !process.argv[3]))
+  throw new Error("Usage: node scripts/smoke-sessions.js codex SAVED_APP_PROJECT_PATH | codex-ws. Creates a real disposable task; desktop task must be archived in App after the test.");
 const legacyHost = mode === "codex-ws" ? await codexHost() : null;
 const cwd = await mkdtemp(join(tmpdir(), "mailbox-live-session-"));
 const app = await startServer({ port: 0, dbPath: join(cwd, "mailbox.db") });
@@ -74,14 +74,13 @@ async function waitFor(text, seconds = 180) {
   throw new Error(`No reply containing ${text}`);
 }
 try {
-  session = await createSession(client, kind, {
+  session = await createCodexSession(client, {
     topic: topic.id,
     as: "human",
     cwd: mode === "codex" ? resolve(process.argv[3]) : cwd,
     endpoint: legacyHost?.endpoint,
     agentBin: legacyHost?.agentBin,
     timeout: 180,
-    onProgress: (progress) => console.log(JSON.stringify(progress)),
   });
   console.log(
     JSON.stringify({
@@ -127,7 +126,7 @@ try {
   await writeFile(join(cwd, "proof.json"), JSON.stringify(proof, null, 2));
   console.log(JSON.stringify({ phase: "passed", ...proof }));
 } finally {
-  session ??= await client.request(sessionPath(topic.id, kind));
+  session ??= await client.request(codexSessionPath(topic.id));
   if (session?.native_id) {
     if (mode === "codex-ws") {
       const host = legacyHost;
@@ -159,7 +158,7 @@ try {
       kind,
       cwd,
       nativeId: session?.native_id,
-      note: mode === "claude" ? `临时信箱已关闭；请在 Claude 桌面归档主题 ${topic.id} 的测试会话。没有通过 CLI 查询或停止会话。` : mode === "codex" ? "临时信箱已关闭；请在当前 App 归档上述测试任务。测试记录保留在临时目录。" : "本次测试记录保留在临时目录；共享 App Server 继续运行",
+      note: mode === "codex" ? "临时信箱已关闭；请在当前 App 归档上述测试任务。测试记录保留在临时目录。" : "本次测试记录保留在临时目录；共享 App Server 继续运行",
     }),
   );
 }

@@ -19,8 +19,8 @@ mailbox project rename NAME_OR_ID --name NEW_NAME
 mailbox project delete NAME_OR_ID
 mailbox participant create --name NAME [--kind codex|claude|agent]
 mailbox participant list
-mailbox session create claude|codex --topic TOPIC --cwd PATH --as INITIATOR_ID [--timeout 60]
-mailbox session info claude|codex --topic TOPIC
+mailbox session create codex --topic TOPIC --cwd PATH --as INITIATOR_ID [--timeout 60]
+mailbox session info codex --topic TOPIC
 mailbox topic create --title TITLE --body TEXT [--as ID] [--project NAME_OR_ID]
 mailbox topic show TOPIC
 mailbox topic list [--project NAME_OR_ID | --unassigned]
@@ -47,8 +47,7 @@ mailbox codex app status
 connect 在目标 agent 会话内部执行，使用自身原生消息入口；--background 仅后台运行通知进程。
 Codex 使用 CODEX_THREAD_ID 或 --thread；Claude 使用自身导出的消息地址和 token。
 --agent-bin 指定目标 agent 程序；--list 查看参与者，--preview 只检查参数。
-session create 为 topic 创建独立会话；Codex 默认复用已接入的桌面 App，Claude 打开桌面 Code 新会话并预填指令。
-Claude 需在桌面确认目录并发送；awaiting_user 不代表已发送或已接入，不再使用 Claude CLI / --agent-bin。
+session create 仅创建 Codex 会话，默认复用已接入的桌面 App；Claude 请在已有会话内加入信箱。
 codex app connect 在当前 Codex App 任务内执行，仅登记自身 App 入口；Claude 之后可直接创建。
 只有明确传 --endpoint 才使用独立 App Server，不会自动启动或回退到 4500。
 session create 成功仅表示新会话已登记收件入口；讨论结果查看 read，处理进度查看 ACK。
@@ -161,13 +160,13 @@ try {
       if (!context.pipe || !context.threadId) throw new Error("请在当前 Codex App 的任务内执行此命令；不接受手填或猜测其他任务的入口");
       result = await client.request("/api/codex/connect", { context });
     } else result = await client.request("/api/codex/status");
-  } else if (p[0] === "session" && ["create", "info"].includes(p[1])) {
-    const { createSession, sessionPath } = await import("../src/sessions.js");
+  } else if (p[0] === "session" && ["create", "info"].includes(p[1]) && p[2] === "codex") {
+    const { createCodexSession, codexSessionPath } = await import("../src/sessions.js");
     const topic = requireValue("topic");
     result =
       p[1] === "info"
-        ? await client.request(sessionPath(topic, p[2]))
-        : await createSession(client, p[2], {
+        ? await client.request(codexSessionPath(topic))
+        : await createCodexSession(client, {
             topic,
             cwd: requireValue("cwd"),
             as: requireValue("as"),
@@ -176,7 +175,6 @@ try {
             timeout: int("timeout", 60, 300),
             maxMessages: int("max-messages", 20),
             signal: controller.signal,
-            onProgress: (progress) => console.error(JSON.stringify(progress)),
           });
   } else if (p[0] === "connect") {
     const { connectMailbox } = await import("../src/connect.js");

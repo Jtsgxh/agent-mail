@@ -169,7 +169,7 @@ export async function startServer({
         return;
       }
       if (req.method === "GET" && path === "/api/health")
-        return send({ ok: true, version: "0.1.0", claude_desktop: true });
+        return send({ ok: true, version: "0.1.0" });
       const disconnect = path.match(/^\/api\/bridge\/([^/]+)$/);
       if (req.method === "DELETE" && disconnect) {
         store.participant(disconnect[1]);
@@ -255,7 +255,7 @@ export async function startServer({
       if (req.method === "GET" && path === "/api/inbox")
         return send(store.inbox(query.as));
       const sessionRoute = path.match(
-        /^\/api\/topics\/([^/]+)\/sessions\/([^/]+)$/,
+        /^\/api\/topics\/([^/]+)\/sessions\/codex$/,
       );
       const desktopLaunch = path.match(/^\/api\/topics\/([^/]+)\/sessions\/codex\/launch$/);
       if (desktopLaunch && req.method === "POST") {
@@ -276,9 +276,9 @@ export async function startServer({
         finally { appLaunches.delete(topic); }
       }
       if (sessionRoute) {
-        const [, topic, kind] = sessionRoute;
+        const [, topic] = sessionRoute;
         if (req.method === "GET") {
-          const session = store.session(topic, kind);
+          const session = store.session(topic, "codex");
           return send(
             session && {
               ...session,
@@ -291,18 +291,14 @@ export async function startServer({
           );
         }
         if (req.method === "POST") {
-          if (kind === "claude" && body.transport !== "claude-desktop")
-            throw new HttpError(400, "Claude 创建已改用桌面端，请使用新版 mailbox");
-          if (body.transport !== undefined && body.transport !== "claude-desktop")
-            throw new HttpError(400, "此入口仅接受 Claude 桌面传输类型");
-          const session = store.reserveSession(topic, { as: body.as, cwd: body.cwd, kind, transport: body.transport });
+          const session = store.reserveSession(topic, { as: body.as, cwd: body.cwd, kind: "codex" });
           changed();
           return send(session, 201);
         }
         if (req.method === "PATCH") {
-          if (store.session(topic, kind)?.transport === "desktop-app")
+          if (store.session(topic, "codex")?.transport === "desktop-app")
             throw new HttpError(409, "App 任务的启动结果由信箱服务维护");
-          const session = store.updateSession(topic, kind, body);
+          const session = store.updateSession(topic, "codex", body);
           changed();
           return send(session);
         }
@@ -364,7 +360,6 @@ export async function startServer({
           const m = target
             ? recipients.join(id, body.as, target)
             : store.join(id, body.as);
-          if (target?.kind === "claude") store.registerClaudeDesktopSession(id, body.as);
           changed();
           return send({
             ...m,

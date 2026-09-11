@@ -50,7 +50,6 @@ test("topic deletion removes all dependent rows and persists without affecting a
     store.ack(other.id, "human", retained.id);
     const session = store.reserveSession(topic.id, { kind: "codex", as: "human", cwd: dirname(path) });
     store.updateSession(topic.id, "codex", { nativeId: "existing-host-session", launchStatus: "submitted" });
-    store.reserveSession(topic.id, { kind: "claude", as: "human", cwd: dirname(path) });
     store.setStatus(topic.id, "closed");
     const before = { members: store.members(other.id), message: store.message(retained.id), participants: store.participants() };
     assert.deepEqual(store.deleteTopic(topic.id), { id: topic.id, title: topic.title, deleted: true });

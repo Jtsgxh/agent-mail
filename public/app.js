@@ -16,7 +16,7 @@ let state = {
 };
 let selected = location.hash.slice(1),
   current = null,
-  currentSessions = { codex: null, claude: null },
+  currentSession = null,
   filter = "all",
   projectFilter = "all",
   replyTo = null,
@@ -208,21 +208,11 @@ function renderDetails() {
   const sessionStatus = {
     reserved: "已预留，尚未确认启动",
     submitted: "已提交启动",
-    awaiting_user: "待用户在 Claude 桌面确认目录并发送指令",
-    registered: "Claude 桌面会话已加入过信箱",
     uncertain: "启动结果未确认，请核查原会话",
   };
-  $("#topic-sessions").innerHTML = ["codex", "claude"]
-    .filter((kind) => currentSessions[kind])
-    .map((kind) => {
-      const session = currentSessions[kind];
-      const name = kind === "codex" ? "Codex" : "Claude";
-      const desktop = session.transport === "claude-desktop";
-      const ready = state.recipients.some((r) => r.participant_id === session.participant_id && r.status === "ready");
-      const status = desktop && ready ? "Claude 桌面会话已加入信箱" : sessionStatus[session.launch_status] ?? session.launch_status;
-      return `<div class="session-notice"><strong>${desktop ? "此主题已有 Claude 桌面创建记录，不会重复打开。" : `此主题已有 ${name}，不会再开一个。`}</strong><span>${escapeHtml(status)}</span><span>${escapeHtml(memberStatus({ id: session.participant_id, kind }))}</span>${desktop && !ready ? '<span>在原桌面窗口完成确认、发送与接入；已发送则检查会话结果，不要重复创建。</span>' : ""}</div>`;
-    })
-    .join("") || '<p class="muted">此主题尚未创建独立 agent 会话。</p>';
+  $("#topic-sessions").innerHTML = currentSession
+    ? `<div class="session-notice"><strong>此主题已有 Codex，不会再开一个。</strong><span>${escapeHtml(sessionStatus[currentSession.launch_status] ?? currentSession.launch_status)}</span><span>${escapeHtml(memberStatus({ id: currentSession.participant_id, kind: "codex" }))}</span></div>`
+    : '<p class="muted">此主题尚未创建独立 Codex 会话。</p>';
   renderRecipients();
   $("#pause-topic").textContent =
     current.status === "paused" ? "恢复通知" : "暂停通知";
@@ -323,7 +313,7 @@ async function refresh() {
   renderTopics();
   $(".details").hidden = !selected;
   if (!selected) {
-    currentSessions = { codex: null, claude: null };
+    currentSession = null;
     $("#welcome").hidden = false;
     $("#discussion").hidden = true;
     return;
@@ -332,14 +322,12 @@ async function refresh() {
   const loaded = [];
   let t,
     codexSession,
-    claudeSession,
     after = 0,
     page;
   try {
-    [t, codexSession, claudeSession] = await Promise.all([
+    [t, codexSession] = await Promise.all([
       api(`/topics/${topicId}`),
       api(`/topics/${topicId}/sessions/codex`),
-      api(`/topics/${topicId}/sessions/claude`),
     ]);
     if (id !== refreshId) return;
     // Re-read the displayed window so delivery acknowledgements refresh too.
@@ -363,7 +351,7 @@ async function refresh() {
   }
   if (id !== refreshId) return;
   current = t;
-  currentSessions = { codex: codexSession, claude: claudeSession };
+  currentSession = codexSession;
   messages = loaded;
   cursor = page.next;
   hasMore = page.hasMore;

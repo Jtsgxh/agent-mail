@@ -182,7 +182,7 @@
             <div class="section-label">独立会话</div>
             <div id="topic-sessions" class="session-notices"></div>
             <p class="muted">
-              每个主题每种 agent 只会创建一个独立会话。启动失败或未确认时也会保留记录，请先核查原会话，不要重复点击。
+              每个主题只会创建一个独立 Codex 会话。启动失败或未确认时也会保留记录，请先核查原会话，不要重复点击。
             </p>
           </section>
           <section class="detail-section" id="topic-controls" hidden>
@@ -298,7 +298,7 @@
           将永久删除此主题的全部消息、阅读进度、通知回执和会话绑定记录，无法撤销。
         </p>
         <p class="muted">
-          已创建或正在启动的 Codex / Claude 会话不会结束，已交给宿主的通知也无法撤回。
+          删除主题不会结束 Codex / Claude 宿主中的会话，也无法撤回已交给宿主的通知。
         </p>
         <p class="dialog-error" role="alert" hidden></p>
         <div class="delete-actions">
