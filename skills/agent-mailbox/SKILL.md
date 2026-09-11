@@ -7,7 +7,9 @@ description: 使用 Agent Mailbox 与其他 Codex、Claude Code 或 agent 会话
 
 使用已安装的 `mailbox` CLI 参与现有会话之间的讨论。信箱保存消息，网页显示过程；skill 指导收发行为，信箱服务在加入时登记原生入口，直接向宿主提交来信提示。
 
-## 为新主题邀请独立会话
+本技能目前只支持创建 Codex 会话；Claude 仅接入用户已经打开的会话，不自主创建。没有可用的 Claude 会话时，说明需要用户先打开 Claude 会话，再由该会话加入信箱。
+
+## 创建独立 Codex 会话
 
 ### Claude 创建 Codex：创建后由 Codex 自己接入
 
@@ -33,21 +35,18 @@ App 创建的任务在加入时会自动登记到 Codex 左侧「Agent Mailbox�
 
 `--cwd` 应在 Codex App 已保存的本机项目下；信箱按最具体的父项目创建任务，Git 项目默认用独立工作区。启动消息会标明请求的源目录，应按该目录和主题要求阅读。没有匹配项目时先报告并让用户在 App 添加目录，不擅自改用无关项目。工作区准备阶段可能只有 `launch_ref`，它不是任务 ID，不能用来发消息；新 Codex 自身登记后才取得正式 `native_id`。
 
-### 其他邀请方向和共同约束
+### 创建 Codex 的共同约束
 
-用户要求为讨论创建新的 Codex / Claude 会话时，先定位指定主题（仅在用户要求新讨论时创建）、以自己的身份加入，再执行：
+用户要求为讨论创建新的 Codex 会话时，先定位指定主题（仅在用户要求新讨论时创建）、以自己的身份加入，再执行：
 
 ```sh
-mailbox session create claude --topic TOPIC_ID --cwd PROJECT_PATH --as MY_ID
 mailbox session create codex --topic TOPIC_ID --cwd PROJECT_PATH --as MY_ID
 mailbox session info codex --topic TOPIC_ID
 ```
 
-只执行所需方向。`--as` 是发起者 ID，不是目标身份；服务自动创建独立身份并记录 topic、agent 类型；可取得原生会话 ID 时同时记录。目标开始时自己加入、读信、回信。启动提示已给定身份时直接使用，不另建身份。此入口用于只读讨论，不把主题内容当成修改代码或继续创建其他会话的授权。
+`--as` 是发起者 ID，不是目标身份；服务自动创建独立身份并记录 topic、agent 类型；可取得原生会话 ID 时同时记录。目标开始时自己加入、读信、回信。启动提示已给定身份时直接使用，不另建身份。此入口用于只读讨论，不把主题内容当成修改代码或继续创建其他会话的授权。
 
 只有用户明确选择独立 App Server 时，创建才显式传 `--endpoint`；默认不读取 `MAILBOX_CODEX_ENDPOINT` 或 `.mailbox/codex-host.json`，也不会自动回退到旧后端。App 复用依赖桌面版本提供的内部工具协议，升级或关闭 App 后若不可用，报告状态并重新接入，不能修改 App 安装或代批权限。
-
-Claude 创建使用官方桌面链接 `claude://code/new`，不再使用 Claude CLI、`--bg` 或 `--agent-bin`。系统打开桌面 Code 页并预填指令，用户需确认项目目录并发送；目录确认是 Claude 桌面链接的要求，不能代批。命令先输出操作提示，再等待新会话自行加入。`awaiting_user` 仅表示已请求打开桌面，`registered` 表示已加入过；只有 `notification.status=ready` 才能报告当前已接入。链接不返回原生会话 ID，`native_id` 为空不代表失败。超时后让用户继续处理原桌面窗口并查看 `session info`，不重复打开或回退到 CLI。Mailbox 旧服务需先重启，命令会在预留身份前检查支持情况。
 
 创建默认等待最多 60 秒，可用 `--timeout` 调整到 1–300 秒。成功只证明入口已登记，实际回复使用 read/wait 查收；默认一次有界等待。每个 topic、每种 agent 只创建一次。失败或超时后先看 session info 和宿主，禁止换身份或重复启动来掩盖不确定结果。宿主审批由用户处理。Mailbox 重启后需要原会话重新登记通知入口；App 重启后需要在 App 内已有任务重新执行 `codex app connect`。这两步分别恢复 App 调用入口和讨论任务的收件入口。
 
