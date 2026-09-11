@@ -208,6 +208,8 @@ function renderDetails() {
   const sessionStatus = {
     reserved: "已预留，尚未确认启动",
     submitted: "已提交启动",
+    awaiting_user: "待用户在 Claude 桌面确认目录并发送指令",
+    registered: "Claude 桌面会话已加入过信箱",
     uncertain: "启动结果未确认，请核查原会话",
   };
   $("#topic-sessions").innerHTML = ["codex", "claude"]
@@ -215,7 +217,10 @@ function renderDetails() {
     .map((kind) => {
       const session = currentSessions[kind];
       const name = kind === "codex" ? "Codex" : "Claude";
-      return `<div class="session-notice"><strong>此主题已有 ${name}，不会再开一个。</strong><span>${escapeHtml(sessionStatus[session.launch_status] ?? session.launch_status)}</span><span>${escapeHtml(memberStatus({ id: session.participant_id, kind }))}</span></div>`;
+      const desktop = session.transport === "claude-desktop";
+      const ready = state.recipients.some((r) => r.participant_id === session.participant_id && r.status === "ready");
+      const status = desktop && ready ? "Claude 桌面会话已加入信箱" : sessionStatus[session.launch_status] ?? session.launch_status;
+      return `<div class="session-notice"><strong>${desktop ? "此主题已有 Claude 桌面创建记录，不会重复打开。" : `此主题已有 ${name}，不会再开一个。`}</strong><span>${escapeHtml(status)}</span><span>${escapeHtml(memberStatus({ id: session.participant_id, kind }))}</span>${desktop && !ready ? '<span>在原桌面窗口完成确认、发送与接入；已发送则检查会话结果，不要重复创建。</span>' : ""}</div>`;
     })
     .join("") || '<p class="muted">此主题尚未创建独立 agent 会话。</p>';
   renderRecipients();

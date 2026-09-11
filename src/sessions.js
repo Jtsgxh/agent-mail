@@ -1,14 +1,11 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { randomUUID } from "node:crypto";
 import { realpath, stat, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { agentCommand } from "./connect.js";
 import { CodexConnection } from "./codex.js";
 import { queueCodex } from "./native.js";
+import { claudeDesktopAction, claudeDesktopLink, openClaudeDesktop } from "./claude-desktop.js";
 
-const exec = promisify(execFile);
 const cli = fileURLToPath(new URL("../bin/mailbox.js", import.meta.url));
 export const codexHostFile = fileURLToPath(
   new URL("../.mailbox/codex-host.json", import.meta.url),
@@ -132,7 +129,7 @@ export function sessionPrompt(
 加入失败时停止并报告原错误，不改收件策略或使用手动模式冒充接入成功。后续原生通知到来时，用 agent-mailbox skill 按以上身份继续读信、回复和 ACK；无需轮询或无限等待。`;
 }
 
-async function waitForRegistration(client, path, seconds, signal) {
+async function waitForRegistration(client, path, seconds, signal, desktop = false) {
   const combined = AbortSignal.any([
     AbortSignal.timeout(seconds * 1000),
     ...(signal ? [signal] : []),
@@ -149,7 +146,9 @@ async function waitForRegistration(client, path, seconds, signal) {
     if (signal?.aborted) throw signal.reason;
     if (combined.aborted)
       throw new Error(
-        "会话已提交，但尚未确认加入主题；用 session info 查看绑定，并在宿主检查会话，不要重复创建",
+        desktop
+          ? `Claude 桌面已请求打开，但尚未确认加入主题。${claudeDesktopAction} 用 session info 查看状态。`
+          : "会话已提交，但尚未确认加入主题；用 session info 查看绑定，并在宿主检查会话，不要重复创建",
       );
     throw error;
   }
@@ -167,6 +166,8 @@ export async function createSession(
     timeout = 60,
     maxMessages = 20,
     signal,
+    onProgress = () => {},
+    openDesktop = openClaudeDesktop,
   } = {},
 ) {
   const path = sessionPath(topic, kind);
@@ -177,6 +178,8 @@ export async function createSession(
     throw new Error("--max-messages 必须大于 0");
   if (kind === "claude" && endpoint)
     throw new Error("Claude 不使用 --endpoint");
+  if (kind === "claude" && agentBin)
+    throw new Error("Claude 创建已改用桌面端，不再接受 --agent-bin");
   cwd = await realpath(resolve(cwd));
   if (!(await stat(cwd)).isDirectory()) throw new Error("--cwd 必须是目录");
   if (kind === "codex" && !endpoint) {
@@ -195,89 +198,39 @@ export async function createSession(
   if (details.status !== "open") throw new Error("只可为开放主题创建会话");
   if (!details.members.some((p) => p.id === as))
     throw new Error("发起者必须已加入此主题");
-  const program = await agentCommand(kind, { bin: agentBin });
-  // A new independent session must not inherit the caller's native recipient identity.
-  const env = { ...process.env };
-  delete env.CODEX_THREAD_ID;
-  delete env.CLAUDE_CODE_MESSAGING_SOCKET;
-  delete env.CLAUDE_CODE_MESSAGING_TOKEN;
+  if (kind === "claude" && (await client.request("/api/health")).claude_desktop !== true)
+    throw new Error("当前信箱服务尚未加载 Claude 桌面创建功能，请重启 Mailbox；未创建会话");
+  const program = kind === "codex" ? await agentCommand(kind, { bin: agentBin }) : null;
+  if (kind === "claude") {
+    // Validate link size before reserving a persistent identity. Actual IDs have this same size.
+    claudeDesktopLink(cwd, sessionPrompt({ kind, cwd, topic_id: topic,
+      participant_id: "00000000-0000-0000-0000-000000000000", requested_by: as }, client.url, maxMessages));
+  }
   let rpc;
   let reserved;
   let nativeId;
   let submitted = false;
   try {
-    if (kind === "claude") {
-      let result;
-      try {
-        result = await exec(
-          program.command,
-          [...program.args, "agents", "--json"],
-          {
-            cwd,
-            env,
-            windowsHide: true,
-            timeout: 15000,
-            maxBuffer: 1024 * 1024,
-            signal,
-          },
-        );
-      } catch {
-        throw new Error(
-          "无法查询正在运行的 Claude 会话，请检查 Claude CLI；未创建会话",
-        );
-      }
-      const agents = JSON.parse(result.stdout);
-      if (
-        !Array.isArray(agents) ||
-        !agents.some((a) => Number.isInteger(a.pid) && a.pid > 0)
-      )
-        throw new Error("没有正在运行的 Claude 会话；本命令不负责启动离线宿主");
-    } else {
+    if (kind === "codex") {
       rpc = await new CodexConnection(
         endpoint,
-        env.MAILBOX_CODEX_TOKEN,
+        process.env.MAILBOX_CODEX_TOKEN,
       ).connect();
     }
     signal?.throwIfAborted();
-    reserved = await client.request(path, { as, cwd });
+    reserved = await client.request(path, { as, cwd,
+      ...(kind === "claude" ? { transport: "claude-desktop" } : {}),
+    });
     const prompt = sessionPrompt(reserved, client.url, maxMessages, {
       agentBin: agentBin && resolve(agentBin),
       endpoint,
     });
     if (kind === "claude") {
-      nativeId = randomUUID();
-      reserved = await client.request(
-        path,
-        { nativeId, launchStatus: "reserved" },
-        "PATCH",
-      );
-      try {
-        await exec(
-          program.command,
-          [
-            ...program.args,
-            "--bg",
-            "--session-id",
-            nativeId,
-            "--name",
-            `mailbox-${topic}`,
-            prompt,
-          ],
-          {
-            cwd,
-            env,
-            windowsHide: true,
-            timeout: 30000,
-            maxBuffer: 256000,
-            signal,
-          },
-        );
-      } catch (error) {
-        // execFile errors embed all argv. Do not expose the prompt or inherited secrets.
-        throw new Error(
-          `Claude 启动调用未成功确认 (${error.code ?? "unknown"})；请在 Claude 宿主检查会话 ${nativeId}`,
-        );
-      }
+      // Recheck topic existence/status immediately before opening an external app.
+      const current = await client.request(`/api/topics/${encodeURIComponent(topic)}`);
+      if (current.status !== "open") throw new Error("主题已暂停或关闭，未打开 Claude 桌面");
+      signal?.throwIfAborted();
+      await openDesktop(claudeDesktopLink(cwd, prompt), { signal });
     } else {
       const started = await rpc.call("thread/start", { cwd });
       nativeId = started.thread.id;
@@ -293,7 +246,7 @@ export async function createSession(
         signal,
       });
     }
-    await client.request(path, { launchStatus: "submitted" }, "PATCH");
+    reserved = await client.request(path, { launchStatus: kind === "claude" ? "awaiting_user" : "submitted" }, "PATCH");
     submitted = true;
   } catch (error) {
     if (reserved && !submitted) {
@@ -303,7 +256,9 @@ export async function createSession(
           {
             nativeId,
             launchStatus: "uncertain",
-            error: "启动未确认；检查原生宿主和已记录会话 ID，不要重复创建",
+            error: kind === "claude"
+              ? "桌面打开结果未确认；检查 Claude 桌面和已有会话记录，不要重复创建"
+              : "启动未确认；检查原生宿主和已记录会话 ID，不要重复创建",
           },
           "PATCH",
         );
@@ -317,5 +272,7 @@ export async function createSession(
   } finally {
     await rpc?.close();
   }
-  return waitForRegistration(client, path, timeout, signal);
+  if (kind === "claude" && reserved.launch_status !== "registered") onProgress({ phase: "awaiting_user", topic_id: topic,
+    participant_id: reserved.participant_id, message: claudeDesktopAction });
+  return waitForRegistration(client, path, timeout, signal, kind === "claude");
 }

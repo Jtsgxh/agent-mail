@@ -120,11 +120,13 @@ App 适配器使用当前桌面版本提供的本机工具管道（当前验证�
 
 仅在明确选择独立 WebSocket 后端时运行 `node scripts/start-codex.js`，并给 `session create codex` 显式传 `--endpoint ws://127.0.0.1:4500`。默认 App 创建不读取 `MAILBOX_CODEX_ENDPOINT` 或 `.mailbox/codex-host.json`，不会因旧配置继续连接 4500。原启动脚本和 `/api/codex/host/status`、`/api/codex/host/start` 仅保留给显式使用旧后端的调用者，网页不再启动它。
 
-Claude 无需另建 App Server：CLI 的 `--bg` 使用 Claude 自己的后台 supervisor。本命令要求 `claude agents --json` 中已有运行中的会话。创建后由新会话在自己的工具环境加入并登记收件管道，绝不读取其他 Claude 会话的 token。若 Claude 没有运行，命令在创建身份之前失败。
+Claude 创建改为通过系统打开官方 `claude://code/new?q=...&folder=...` 链接，在 Claude 桌面的 Code 页预填启动指令。无需安装 Claude CLI，不再查询 `claude agents`、运行 `--bg` 或接受 Claude 的 `--agent-bin`；系统可启动尚未运行的桌面应用。`mailbox` 命令仍用于信箱通信。参数按 URL 编码传递，超长指令或链接在预留身份前拒绝，避免桌面截断启动指令。
 
-`session create` 默认最多等待 60 秒的入口登记（`--timeout 1–300`），成功返回绑定记录与 `notification.status=ready`；这不证明已回信。状态 `reserved` 表示已预留身份，`submitted` 表示启动调用已确认，`uncertain` 表示启动过程未确认；都不是模型在线状态。启动失败或调用超时可能已创建原生会话，记录及原生 ID 会保留，禁止盲目重试。以 `session info`、宿主状态、消息和 ACK 分别核查。新会话若卡在权限审批，请在宿主处理；Mailbox 不代批权限。
+**在 Claude 桌面确认项目目录并发送预填指令后，才会开始讨论。** 官方链接只负责预填，不自动发送；目录即使曾被信任也需确认。命令会立即输出待操作提示，然后在原窗口等待加入；超时后先查看 `session info`，继续处理已打开的窗口，不重复创建。链接不返回原生会话 ID，因此 `native_id` 保持空值，不编造 ID。新会话仍在自身工具环境执行 `topic join`，登记自己的收件管道，再主动获取主题目标、读信、回信和 ACK。参考：[Claude 桌面链接](https://support.claude.com/en/articles/14729294-open-claude-desktop-with-a-link)。
 
-Mailbox 重启会保留绑定和讨论，但清除内存中的通知入口，需在原会话重新执行加入。Claude 进程退出或重启也可能使旧管道失效；此版本不负责自动恢复退出的 Claude 进程或替换入口。每个 topic 的会话只创建一次，不采用每封信都重新 `exec/resume` 的调度方式。
+`session create` 默认最多等待 60 秒的入口登记（`--timeout 1–300`），成功返回绑定记录与 `notification.status=ready`；这不证明已回信。状态 `reserved` 表示已预留身份，Codex 的 `submitted` 表示启动调用已确认，Claude 桌面的 `awaiting_user` 表示已请求打开、待确认与发送，`registered` 表示新 Claude 已用原生入口加入过，`uncertain` 表示打开或启动过程未确认。是否当前已登记以 `notification.status=ready` 为准；这些状态都不证明模型已经回复。启动失败或调用超时可能已创建原生会话，记录及原生 ID 会保留，禁止盲目重试。以 `session info`、宿主状态、消息和 ACK 分别核查。新会话若卡在权限审批，请在宿主处理；Mailbox 不代批权限。
+
+更新服务后需重启 Mailbox 才能加载桌面状态支持；新版命令遇到旧服务会在预留身份前拒绝。Mailbox 重启会保留绑定和讨论，但清除内存中的通知入口，需在原会话重新执行加入。Claude 进程退出或重启也可能使旧管道失效；此版本不负责自动恢复退出的 Claude 进程或替换入口。每个 topic 的会话只创建一次，不采用每封信都重新 `exec/resume` 的调度方式。
 
 ### 使用已有会话
 
@@ -317,7 +319,7 @@ npm test
 
 自动化验证包括真实 HTTP/SQLite、独立 CLI 进程、官方 MCP SDK 通道，以及模拟 App Server 的运行状态和消息事件。默认测试不调用模型、不消耗模型额度。
 
-当前桌面 App 的真实创建验收需明确授权新建临时任务，运行 `node scripts/smoke-sessions.js codex SAVED_APP_PROJECT_PATH`。它使用隔离信箱验证新任务主动加入、两次回信和 ACK，结束时关闭测试信箱并打印任务 ID；随后在 App 归档该测试任务。测试本身不读取或修改项目代码。显式测试旧 WebSocket 创建流程用 `node scripts/smoke-sessions.js codex-ws`。
+当前桌面 App 的真实创建验收需明确授权新建临时任务，运行 `node scripts/smoke-sessions.js codex SAVED_APP_PROJECT_PATH`。它使用隔离信箱验证新任务主动加入、两次回信和 ACK，结束时关闭测试信箱并打印任务 ID；随后在 App 归档该测试任务。测试本身不读取或修改项目代码。Claude 桌面验收运行 `node scripts/smoke-sessions.js claude`，需在桌面确认目录并发送，脚本验证两轮回信和 ACK；结束后在 Claude 桌面归档测试会话，不再调用 Claude CLI 清理。显式测试旧 WebSocket 创建流程用 `node scripts/smoke-sessions.js codex-ws`。
 
 可显式运行真实 Codex 验收（使用本机现有登录，消耗三轮模型调用：初始化一轮＋信箱唤醒两轮）：
 

@@ -2,14 +2,10 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { promisify } from "node:util";
-import { execFile } from "node:child_process";
 import { startServer } from "../src/server.js";
 import { Client } from "../src/client.js";
 import { createSession, sessionPath, codexHost } from "../src/sessions.js";
-import { agentCommand } from "../src/connect.js";
 import { CodexConnection } from "../src/codex.js";
-const exec = promisify(execFile);
 const mode = process.argv[2];
 const kind = mode === "codex-ws" ? "codex" : mode;
 if (!["claude", "codex", "codex-ws"].includes(mode) || (mode === "codex" && !process.argv[3]))
@@ -85,6 +81,7 @@ try {
     endpoint: legacyHost?.endpoint,
     agentBin: legacyHost?.agentBin,
     timeout: 180,
+    onProgress: (progress) => console.log(JSON.stringify(progress)),
   });
   console.log(
     JSON.stringify({
@@ -153,26 +150,6 @@ try {
       } finally {
         await rpc.close();
       }
-    } else if (kind === "claude") {
-      const program = await agentCommand("claude");
-      const agents = JSON.parse(
-        (
-          await exec(
-            program.command,
-            [...program.args, "agents", "--json", "--all"],
-            { windowsHide: true },
-          )
-        ).stdout,
-      );
-      const owned = agents.find(
-        (a) =>
-          a.sessionId === session.native_id || a.name === `mailbox-${topic.id}`,
-      );
-      if (owned?.id)
-        await exec(program.command, [...program.args, "stop", owned.id], {
-          windowsHide: true,
-          timeout: 15000,
-        });
     }
   }
   await app.close();
@@ -182,7 +159,7 @@ try {
       kind,
       cwd,
       nativeId: session?.native_id,
-      note: mode === "codex" ? "临时信箱已关闭；请在当前 App 归档上述测试任务。测试记录保留在临时目录。" : "本次测试记录保留在临时目录；共享 App Server 继续运行",
+      note: mode === "claude" ? `临时信箱已关闭；请在 Claude 桌面归档主题 ${topic.id} 的测试会话。没有通过 CLI 查询或停止会话。` : mode === "codex" ? "临时信箱已关闭；请在当前 App 归档上述测试任务。测试记录保留在临时目录。" : "本次测试记录保留在临时目录；共享 App Server 继续运行",
     }),
   );
 }

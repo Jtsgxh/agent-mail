@@ -169,7 +169,7 @@ export async function startServer({
         return;
       }
       if (req.method === "GET" && path === "/api/health")
-        return send({ ok: true, version: "0.1.0" });
+        return send({ ok: true, version: "0.1.0", claude_desktop: true });
       const disconnect = path.match(/^\/api\/bridge\/([^/]+)$/);
       if (req.method === "DELETE" && disconnect) {
         store.participant(disconnect[1]);
@@ -291,7 +291,11 @@ export async function startServer({
           );
         }
         if (req.method === "POST") {
-          const session = store.reserveSession(topic, { as: body.as, cwd: body.cwd, kind });
+          if (kind === "claude" && body.transport !== "claude-desktop")
+            throw new HttpError(400, "Claude 创建已改用桌面端，请使用新版 mailbox");
+          if (body.transport !== undefined && body.transport !== "claude-desktop")
+            throw new HttpError(400, "此入口仅接受 Claude 桌面传输类型");
+          const session = store.reserveSession(topic, { as: body.as, cwd: body.cwd, kind, transport: body.transport });
           changed();
           return send(session, 201);
         }
@@ -360,6 +364,7 @@ export async function startServer({
           const m = target
             ? recipients.join(id, body.as, target)
             : store.join(id, body.as);
+          if (target?.kind === "claude") store.registerClaudeDesktopSession(id, body.as);
           changed();
           return send({
             ...m,

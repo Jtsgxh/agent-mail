@@ -137,7 +137,9 @@ export class Store {
     );
   }
   reserveSession(topic, { kind, as, cwd, transport = "native" }) {
-    if (!["native", "desktop-app"].includes(transport) || (transport === "desktop-app" && kind !== "codex"))
+    if (!["native", "desktop-app", "claude-desktop"].includes(transport) ||
+        (transport === "desktop-app" && kind !== "codex") ||
+        (transport === "claude-desktop" && kind !== "claude"))
       throw new HttpError(400, "会话传输类型无效");
     if (this.topic(topic).status !== "open")
       throw new HttpError(409, "只可为开放主题创建会话");
@@ -180,8 +182,15 @@ export class Store {
       if (session.transport !== "desktop-app" || (session.launch_ref && session.launch_ref !== launchRef))
         throw new HttpError(409, "不能更换 App 创建请求");
     }
-    if (!["reserved", "submitted", "uncertain"].includes(launchStatus))
+    if (!["reserved", "submitted", "uncertain", "awaiting_user"].includes(launchStatus))
       throw new HttpError(400, "launchStatus 无效");
+    if (launchStatus === "awaiting_user" && session.transport !== "claude-desktop")
+      throw new HttpError(400, "只有 Claude 桌面创建可以等待用户发送");
+    if (session.transport === "claude-desktop" && (nativeId !== undefined || launchRef !== undefined || launchStatus === "submitted"))
+      throw new HttpError(400, "桌面链接不返回原生会话 ID，也不确认指令已发送");
+    // The new desktop session may join before the opener finishes. Keep its stronger evidence.
+    if (session.transport === "claude-desktop" && session.launch_status === "registered" &&
+        ["awaiting_user", "uncertain"].includes(launchStatus)) return session;
     if (session.launch_status !== "reserved")
       throw new HttpError(409, "启动结果已记录，不可重新启动");
     if (launchStatus === "submitted" && !(nativeId ?? session.native_id ?? launchRef ?? session.launch_ref))
@@ -202,6 +211,10 @@ export class Store {
     if (session.native_id && session.native_id !== thread)
       throw new HttpError(409, "不能更换已绑定的 App 任务");
     this.db.prepare("UPDATE sessions SET native_id=? WHERE topic_id=? AND kind='codex'").run(thread, topic);
+  }
+  registerClaudeDesktopSession(topic, participant) {
+    this.db.prepare("UPDATE sessions SET launch_status='registered',error=NULL WHERE topic_id=? AND kind='claude' AND transport='claude-desktop' AND participant_id=?")
+      .run(topic, participant);
   }
   project(id) {
     const project = this.db

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname, basename } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -133,7 +133,6 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 const args=process.argv.slice(2);
 appendFileSync(${JSON.stringify(calls)},JSON.stringify(args)+'\\n');
-if(args[0]==='agents') { console.log(JSON.stringify(${behavior === "offline" ? "[]" : "[{pid:123,kind:'interactive'}]"})); process.exit(0); }
 if(${JSON.stringify(behavior)}==='fail') process.exit(9);
 const prompt=args[0]==='queue'?args[args.indexOf('--message')+1]:args.at(-1);
 if(${JSON.stringify(behavior)}==='join' && prompt.includes('1. 首先')) {
@@ -157,6 +156,19 @@ console.log('submitted');
     nativeId,
     rpcCalls,
     received,
+    async joinFromLink(url) {
+      const link = new URL(url);
+      assert.equal(link.origin, "null");
+      assert.equal(link.hostname, "code");
+      assert.equal(link.pathname, "/new");
+      assert.equal(link.searchParams.get("folder"), await realpath(dir));
+      const line = link.searchParams.get("q").split("\n").find((x) => x.startsWith("1. 首先"));
+      const argv = JSON.parse(line.slice(line.indexOf("[")));
+      const result = await exec(argv[0], argv.slice(1), { windowsHide: true, env: {
+        ...process.env, CLAUDE_CODE_MESSAGING_SOCKET: socket, CLAUDE_CODE_MESSAGING_TOKEN: "test-own-token",
+      } });
+      assert.equal(JSON.parse(result.stdout).notification.status, "ready");
+    },
     options: {
       topic: topic.id,
       as: "human",
@@ -167,7 +179,7 @@ console.log('submitted');
   };
 }
 
-for (const kind of ["claude", "codex"])
+for (const kind of ["codex"])
   test(`${kind}: actual create CLI reserves a new identity, registers its own route and accepts a later message`, async (t) => {
     const f = await fixture(t);
     const args = [
@@ -222,16 +234,6 @@ for (const kind of ["claude", "codex"])
         f.rpcCalls.find((x) => x.method === "thread/start").params,
         { cwd: result.cwd },
       );
-    } else {
-      const calls = (await readFile(f.calls, "utf8"))
-        .trim()
-        .split("\n")
-        .map(JSON.parse);
-      assert.equal(
-        calls[1][calls[1].indexOf("--session-id") + 1],
-        result.native_id,
-      );
-      assert.equal(calls[1][0], "--bg");
     }
     const message = await f.client.request(
       `/api/topics/${f.topic.id}/messages`,
@@ -273,13 +275,8 @@ test("concurrent reservations launch only one Codex session", async (t) => {
   assert.equal(f.rpcCalls.filter((x) => x.method === "thread/start").length, 1);
 });
 
-test("offline Claude and paused topics fail before reserving an identity", async (t) => {
-  const f = await fixture(t, "offline");
-  await assert.rejects(
-    createSession(f.client, "claude", f.options),
-    /没有正在运行/,
-  );
-  assert.equal(await f.client.request(sessionPath(f.topic.id, "claude")), null);
+test("paused topics fail before reserving an identity", async (t) => {
+  const f = await fixture(t);
   await f.client.request(
     `/api/topics/${f.topic.id}`,
     { status: "paused" },
@@ -293,17 +290,17 @@ test("offline Claude and paused topics fail before reserving an identity", async
   assert.equal(f.rpcCalls.length, 0);
 });
 
-test("a launch error retains its session id and cannot be blindly retried", async (t) => {
+test("a Codex launch error retains its session id and cannot be blindly retried", async (t) => {
   const f = await fixture(t, "fail");
   await assert.rejects(
-    createSession(f.client, "claude", f.options),
-    /未成功确认/,
+    createSession(f.client, "codex", { ...f.options, endpoint: f.endpoint }),
+    /原生队列提交失败/,
   );
-  const info = await f.client.request(sessionPath(f.topic.id, "claude"));
+  const info = await f.client.request(sessionPath(f.topic.id, "codex"));
   assert.equal(info.launch_status, "uncertain");
   assert.ok(info.native_id);
   assert.equal(info.notification, null);
-  await assert.rejects(createSession(f.client, "claude", f.options), /已有/);
+  await assert.rejects(createSession(f.client, "codex", { ...f.options, endpoint: f.endpoint }), /已有/);
 });
 
 test("command success without native registration reports timeout, never ready", async (t) => {
@@ -328,4 +325,109 @@ test("command success without native registration reports timeout, never ready",
     ),
     /409/,
   );
+});
+
+for (const timing of ["before-open-returns", "after-open-returns"]) {
+  test(`Claude desktop ${timing}: new session joins with its own route and receives later mail`, async (t) => {
+    const f = await fixture(t);
+    let link, pending, opens = 0;
+    const options = { ...f.options, agentBin: undefined,
+      openDesktop: async (url) => {
+        opens++;
+        link = url;
+        const reserved = await f.client.request(sessionPath(f.topic.id, "claude"));
+        assert.equal(reserved.transport, "claude-desktop");
+        assert.equal(reserved.native_id, null);
+        assert.equal(reserved.launch_status, "reserved");
+        if (timing === "before-open-returns") await f.joinFromLink(url);
+      },
+      onProgress: () => {
+        if (timing === "after-open-returns") pending = f.joinFromLink(link);
+      },
+    };
+    const session = await createSession(f.client, "claude", options);
+    await pending;
+    assert.equal(session.notification.status, "ready");
+    assert.equal(session.launch_status, "registered");
+    assert.equal(session.native_id, null);
+    assert.ok(!JSON.stringify(session).includes("test-own-token"));
+    assert.ok(!new URL(link).searchParams.get("q").includes("讨论目标"));
+    await assert.rejects(readFile(f.calls), { code: "ENOENT" }); // No Claude CLI dependency.
+    const message = await f.client.request(`/api/topics/${f.topic.id}/messages`, {
+      as: "human", to: session.participant_id, body: "后续来信", requestId: "desktop-second",
+    });
+    const deadline = Date.now() + 4000;
+    while (!(await f.client.request(`/api/inbox?as=${session.participant_id}`)).notifications[0].notified_at) {
+      assert.ok(Date.now() < deadline);
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.ok(f.received.some((frame) => frame.includes(String(message.id))));
+    const inbox = await f.client.request(`/api/inbox?as=${session.participant_id}`);
+    assert.equal(inbox.notifications[0].ack_at, null);
+    await assert.rejects(createSession(f.client, "claude", options), /已有/);
+    assert.equal(opens, 1);
+  });
+}
+
+test("Claude desktop open alone times out with user action; manual join cannot report ready", async (t) => {
+  const f = await fixture(t);
+  let progress;
+  const options = { ...f.options, agentBin: undefined, timeout: 1,
+    openDesktop: async () => {}, onProgress: (value) => { progress = value; },
+  };
+  await assert.rejects(createSession(f.client, "claude", options), /确认项目目录并发送/);
+  const path = sessionPath(f.topic.id, "claude");
+  let session = await f.client.request(path);
+  assert.equal(session.launch_status, "awaiting_user");
+  assert.equal(session.native_id, null);
+  assert.equal(session.notification, null);
+  assert.equal(progress.phase, "awaiting_user");
+  await f.client.request(`/api/topics/${f.topic.id}/members`, { as: session.participant_id });
+  session = await f.client.request(path);
+  assert.equal(session.launch_status, "awaiting_user");
+  assert.equal(session.notification, null);
+  await assert.rejects(createSession(f.client, "claude", options), /已有/);
+  await assert.rejects(f.client.request(path, { launchStatus: "submitted", nativeId: randomUUID() }, "PATCH"), /原生会话 ID/);
+});
+
+test("Claude desktop opener failure is retained without fabricating a native id or retrying", async (t) => {
+  const f = await fixture(t);
+  let opens = 0;
+  const options = { ...f.options, agentBin: undefined,
+    openDesktop: async () => { opens++; throw new Error("desktop-open-failed"); },
+  };
+  await assert.rejects(createSession(f.client, "claude", options), /desktop-open-failed/);
+  const session = await f.client.request(sessionPath(f.topic.id, "claude"));
+  assert.equal(session.launch_status, "uncertain");
+  assert.equal(session.native_id, null);
+  assert.equal(session.notification, null);
+  await assert.rejects(createSession(f.client, "claude", options), /已有/);
+  assert.equal(opens, 1);
+});
+
+test("concurrent Claude desktop requests open only one composer", async (t) => {
+  const f = await fixture(t);
+  let opens = 0;
+  const options = { ...f.options, agentBin: undefined,
+    openDesktop: async (url) => { opens++; await f.joinFromLink(url); },
+  };
+  const results = await Promise.allSettled([1, 2].map(() => createSession(f.client, "claude", options)));
+  assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
+  assert.equal(opens, 1);
+});
+
+test("Claude desktop rejects CLI overrides, old servers, and paused topics before reserving", async (t) => {
+  const f = await fixture(t);
+  let opens = 0;
+  const options = { ...f.options, agentBin: undefined, openDesktop: async () => { opens++; } };
+  await assert.rejects(createSession(f.client, "claude", f.options), /不再接受 --agent-bin/);
+  await assert.rejects(createSession(f.client, "claude", { ...options, endpoint: f.endpoint }), /不使用 --endpoint/);
+  const oldClient = { url: f.client.url, request: (path, ...args) => path === "/api/health" ? {} : f.client.request(path, ...args) };
+  await assert.rejects(createSession(oldClient, "claude", options), /重启 Mailbox/);
+  await assert.rejects(f.client.request(sessionPath(f.topic.id, "claude"), { as: "human", cwd: f.dir }), /新版 mailbox/);
+  await f.client.request(`/api/topics/${f.topic.id}`, { status: "paused" }, "PATCH");
+  await assert.rejects(createSession(f.client, "claude", options), /开放主题/);
+  assert.equal(await f.client.request(sessionPath(f.topic.id, "claude")), null);
+  assert.equal((await f.client.request("/api/participants")).length, 1);
+  assert.equal(opens, 0);
 });

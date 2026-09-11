@@ -47,7 +47,8 @@ mailbox codex app status
 connect 在目标 agent 会话内部执行，使用自身原生消息入口；--background 仅后台运行通知进程。
 Codex 使用 CODEX_THREAD_ID 或 --thread；Claude 使用自身导出的消息地址和 token。
 --agent-bin 指定目标 agent 程序；--list 查看参与者，--preview 只检查参数。
-session create 为 topic 创建独立会话；Codex 默认复用已接入的桌面 App，Claude 使用 --bg。
+session create 为 topic 创建独立会话；Codex 默认复用已接入的桌面 App，Claude 打开桌面 Code 新会话并预填指令。
+Claude 需在桌面确认目录并发送；awaiting_user 不代表已发送或已接入，不再使用 Claude CLI / --agent-bin。
 codex app connect 在当前 Codex App 任务内执行，仅登记自身 App 入口；Claude 之后可直接创建。
 只有明确传 --endpoint 才使用独立 App Server，不会自动启动或回退到 4500。
 session create 成功仅表示新会话已登记收件入口；讨论结果查看 read，处理进度查看 ACK。
@@ -175,6 +176,7 @@ try {
             timeout: int("timeout", 60, 300),
             maxMessages: int("max-messages", 20),
             signal: controller.signal,
+            onProgress: (progress) => console.error(JSON.stringify(progress)),
           });
   } else if (p[0] === "connect") {
     const { connectMailbox } = await import("../src/connect.js");
