@@ -2,6 +2,7 @@ import net from "node:net";
 import { randomUUID } from "node:crypto";
 import { endianness } from "node:os";
 import { isAbsolute, relative, sep } from "node:path";
+import { nativeConnectFailure } from "./notification-recovery.js";
 
 const littleEndian = endianness() === "LE";
 const maxFrame = 8 * 1024 * 1024;
@@ -59,7 +60,9 @@ export function appRequest(context, method, params, { signal, timeout = 30000 } 
     const abort = () => cancel(signal.reason);
     const timer = setTimeout(() => cancel(new Error("Codex App 调用超时；创建结果可能已生效，请检查原记录，不要重复创建")), timeout);
     signal?.addEventListener("abort", abort, { once: true });
-    socket.on("error", (error) => finish(new Error(`无法连接当前 Codex App（${error.code ?? "连接失败"}）；请确认 App 已打开并重新接入`)));
+    socket.on("error", (error) => finish(nativeConnectFailure(
+      `无法连接当前 Codex App（${error.code ?? "连接失败"}）；请确认 App 已打开并重新接入`, error, sent,
+    )));
     socket.on("close", () => finish(new Error("Codex App 连接提前关闭，调用结果未确认")));
     socket.on("connect", () => {
       try {
@@ -183,7 +186,11 @@ export class CodexApp {
       throw new Error("Codex App 返回了无效的新任务 ID；不能将创建请求或信件发给调用任务");
   }
   async send(thread, prompt, options = {}) {
-    this.assertNewTarget(thread);
+    if (options.context) {
+      validateContext(options.context);
+      if (thread !== options.context.threadId)
+        throw new Error("已登记的桌面入口只能向自身任务递交通知");
+    } else this.assertNewTarget(thread);
     const result = await this.call("send_message_to_thread", { threadId: thread, hostId: "local", prompt }, options);
     if (result?.threadId !== thread)
       throw new Error("Codex App 未确认向绑定任务递交消息，请检查原任务，不要重投");

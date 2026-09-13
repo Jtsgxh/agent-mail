@@ -86,7 +86,7 @@ test("joining via actual CLI registers the session and server delivers directly 
       "--agent-bin",
       f.entry,
     ],
-    { env: { ...process.env, CODEX_THREAD_ID: "own-session" } },
+    { env: { ...process.env, CODEX_THREAD_ID: "own-session", CODEX_APP_TOOLS_PIPE_PATH: "" } },
   );
   assert.equal(JSON.parse(result.stdout).notification.status, "ready");
   const state = await f.client.request("/api/state");

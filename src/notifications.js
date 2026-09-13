@@ -1,4 +1,5 @@
 import { agentCommand } from "./connect.js";
+import { appContext } from "./codex-app.js";
 import {
   notificationText,
   queueCodex,
@@ -6,16 +7,19 @@ import {
   writeClaude,
 } from "./native.js";
 import { HttpError, required, number } from "./store.js";
+import { notificationRetryDelays } from "./notification-recovery.js";
 
 // Session addresses and credentials belong to this service lifetime, never SQLite or public state.
 export class NativeRecipients {
-  constructor(store, url, changed, codexApp) {
+  constructor(store, url, changed, codexApp, { retryDelays = notificationRetryDelays } = {}) {
     this.store = store;
     this.url = url;
     this.changed = changed;
     this.codexApp = codexApp;
     this.routes = new Map();
     this.stopping = false;
+    this.retryDelays = [...retryDelays];
+    this.verifiedDesktopTargets = new WeakMap();
   }
   async prepare(participant, input, { desktop = false } = {}) {
     if (!input || typeof input !== "object" || Array.isArray(input))
@@ -31,6 +35,29 @@ export class NativeRecipients {
       target.token = required(input.token, "token", 16000);
     if (participant.kind === "codex") {
       target.thread = required(input.thread, "thread");
+      if (input.app !== undefined) {
+        if (input.endpoint) throw new HttpError(409, "桌面任务入口不能同时指定独立 App Server 地址");
+        if (input.app?.threadId !== target.thread)
+          throw new HttpError(409, "桌面入口必须由目标任务自身登记，不能更换调用任务");
+        // Capture only the joining task's own context, never the server's caller.
+        // A manually opened App task has no mailbox-created session record.
+        target.app = { pipe: input.app.pipe, threadId: input.app.threadId };
+        try { await this.codexApp.probe(target.app); }
+        catch (error) { throw new HttpError(409, error.message); }
+        target.transport = "desktop-app";
+        target.token = null;
+        const old = this.routes.get(participant.id);
+        let staleRegistration;
+        if (old?.status === "ready" && !old.task && old.target.transport === "desktop-app" &&
+            old.target.thread === target.thread && old.target.app?.pipe !== target.app.pipe) {
+          // A new live endpoint alone cannot evict another live endpoint. Probe only
+          // the previously registered address, never discover pipes or borrow a caller.
+          try { await this.codexApp.probe(old.target.app); }
+          catch (error) { if (error.retryableNotification) staleRegistration = old.registration; }
+        }
+        this.verifiedDesktopTargets.set(target, { ...target.app, staleRegistration });
+        return target;
+      }
       if (desktop) {
         if (input.endpoint) throw new HttpError(409, "App 创建的任务不使用独立 App Server 地址");
         try { this.codexApp.assertNewTarget(target.thread); }
@@ -79,11 +106,23 @@ export class NativeRecipients {
     const old = this.routes.get(id);
     if (old?.status === "stopping")
       throw new HttpError(409, "此身份通知正在停止");
-    if (old && JSON.stringify(old.target) !== JSON.stringify(target))
+    const verified = this.verifiedDesktopTargets.get(target);
+    const recoverDesktop = old && !old.task && old.target.kind === "codex" &&
+      target.transport === "desktop-app" && target.app && old.target.thread === target.thread &&
+      verified?.threadId === target.thread && verified.pipe === target.app.pipe &&
+      (["error", "retrying"].includes(old.status) ||
+        (verified.staleRegistration !== undefined && verified.staleRegistration === old.registration));
+    if (old && !recoverDesktop && JSON.stringify(old.target) !== JSON.stringify(target))
       throw new HttpError(409, "此身份已登记另一入口，请先停止原身份通知");
+    if (old?.status === "ready" && !recoverDesktop) return this.store.join(topic, id);
+    if (old?.task) throw new HttpError(409, "原入口仍在完成投递，请稍后重新加入");
     const member = this.store.join(topic, id);
-    if (old?.status === "ready") return member;
+    if (old) {
+      clearTimeout(old.retryTimer);
+      old.controller.abort(new Error("原会话已重新登记入口"));
+    }
     this.routes.set(id, {
+      registration: Symbol("native recipient"),
       target,
       status: "ready",
       registered_at: new Date().toISOString(),
@@ -91,6 +130,10 @@ export class NativeRecipients {
       count: 0,
       controller: new AbortController(),
       task: null,
+      retryCount: 0,
+      retryTimer: null,
+      retryAt: null,
+      retryMessageId: null,
     });
     return member;
   }
@@ -101,12 +144,16 @@ export class NativeRecipients {
       status: route.status,
       registered_at: route.registered_at,
       error: route.error ?? null,
+      retry_at: route.retryAt,
+      retry_count: route.retryCount,
+      retry_message_id: route.retryMessageId,
     }));
   }
   async remove(id) {
     const route = this.routes.get(id);
     if (!route) return false;
     route.status = "stopping";
+    clearTimeout(route.retryTimer);
     route.controller.abort(new Error("通知已停止"));
     await route.task;
     this.routes.delete(id);
@@ -118,6 +165,16 @@ export class NativeRecipients {
       if (route.task || route.status !== "ready") continue;
       route.task = this.deliver(id, route).finally(() => {
         route.task = null;
+        if (route.status === "retrying" && this.routes.get(id) === route && !this.stopping) {
+          route.retryTimer = setTimeout(() => {
+            route.retryTimer = null;
+            if (this.stopping || this.routes.get(id) !== route || route.status !== "retrying") return;
+            route.status = "ready";
+            route.retryAt = null;
+            this.changed();
+          }, Math.max(0, Date.parse(route.retryAt) - Date.now()));
+          route.retryTimer.unref();
+        }
       });
     }
   }
@@ -151,7 +208,7 @@ export class NativeRecipients {
           this.url(),
         );
         if (route.target.transport === "desktop-app")
-          await this.codexApp.send(route.target.thread, text, { signal });
+          await this.codexApp.send(route.target.thread, text, { signal, context: route.target.app });
         else if (route.target.kind === "codex")
           await queueCodex(route.target.program, {
             ...route.target,
@@ -163,6 +220,10 @@ export class NativeRecipients {
         signal.throwIfAborted();
         this.store.delivery(message.id, id);
         route.count++;
+        route.retryCount = 0;
+        route.retryAt = null;
+        route.retryMessageId = null;
+        route.error = null;
         this.changed();
       } catch (error) {
         if (route.controller.signal.aborted) return;
@@ -170,8 +231,20 @@ export class NativeRecipients {
         let detail = error.message;
         if (route.target.token)
           detail = detail.replaceAll(route.target.token, "[redacted]");
-        route.status = "error";
         route.error = detail.slice(0, 2000);
+        const delay = error.retryableNotification ? this.retryDelays[route.retryCount] : undefined;
+        if (delay !== undefined) {
+          // No bytes were sent: removing this attempt from sent cannot duplicate a turn.
+          route.sent.delete(message.id);
+          route.retryCount++;
+          route.retryAt = new Date(Date.now() + delay).toISOString();
+          route.retryMessageId = message.id;
+          route.status = "retrying";
+        } else {
+          route.status = "error";
+          route.retryAt = null;
+          route.retryMessageId = null;
+        }
         this.store.delivery(message.id, id, route.error);
         this.changed();
         return;
@@ -182,8 +255,10 @@ export class NativeRecipients {
   }
   async close() {
     this.stopping = true;
-    for (const route of this.routes.values())
+    for (const route of this.routes.values()) {
+      clearTimeout(route.retryTimer);
       route.controller.abort(new Error("服务停止"));
+    }
     await Promise.all([...this.routes.values()].map((r) => r.task));
     this.routes.clear();
   }
@@ -202,6 +277,12 @@ export function sessionNotification(
       throw new Error(
         "请在目标 Codex 会话内加入主题，或明确传 --thread；仅手动收信用 --manual",
       );
+    if (!options.endpoint && env.CODEX_APP_TOOLS_PIPE_PATH) {
+      const app = appContext(env);
+      if (thread !== app.threadId)
+        throw new Error("桌面入口必须由目标任务自身登记，不能用 --thread 指向其他任务");
+      return { thread, app, maxMessages: options.maxMessages };
+    }
     return {
       thread,
       endpoint: options.endpoint,

@@ -11,6 +11,7 @@ import { CodexApp, appRequest, projectTarget } from "../src/codex-app.js";
 import { startServer } from "../src/server.js";
 import { Client } from "../src/client.js";
 import { createCodexSession } from "../src/sessions.js";
+import { sessionNotification, NativeRecipients } from "../src/notifications.js";
 
 const exec = promisify(execFile);
 const le = endianness() === "LE";
@@ -60,7 +61,7 @@ async function fixture(t, mode = "join") {
     if (request.method === "tools/cancel") return;
     if (request.method === "tools/list") return send(socket, request, { tools: ["list_projects", "create_thread", "send_message_to_thread", "list_threads", "create_sidebar_section", "move_thread_to_sidebar_section"].map((name) => ({ name, namespace: "codex_app" })) });
     const p = request.params;
-    assert.ok(p.threadId === caller || (p.threadId === nativeId && ["list_threads", "move_thread_to_sidebar_section"].includes(p.tool)));
+    assert.ok(p.threadId === caller || (p.threadId === nativeId && ["list_projects", "send_message_to_thread", "list_threads", "move_thread_to_sidebar_section"].includes(p.tool)));
     assert.match(p.callId, /^mcp-call-/);
     assert.match(p.turnId, /^mcp-turn-/);
     if (p.tool === "list_projects") return send(socket, request, result({ projects: [{ projectKind: "local", hostId: "local", projectId: "saved-project", path: process.cwd(), isGitRepository: false }] }));
@@ -248,4 +249,78 @@ test("joining without a prepared group fails explicitly and never creates duplic
   const app = new CodexApp({ env: f.env });
   await assert.rejects(app.showInSidebar(f.nativeId), /codex app connect/);
   assert.equal(f.calls.some((call) => call.params?.tool === "create_sidebar_section"), false);
+});
+
+test("an existing desktop task joins an unconfigured server without a session record and receives pending mail via App", async (t) => {
+  const f = await fixture(t);
+  // Match a mailbox started from an ordinary terminal, outside the desktop App.
+  const server = await startServer({ port: 0, dbPath: ":memory:", codexAppOptions: { env: {} } });
+  t.after(() => server.close());
+  const client = new Client(server.url);
+  const topic = await client.request("/api/topics", { title: "existing task", goal: "direct desktop join" });
+  const p = await client.request("/api/participants", { name: "existing-desktop", kind: "codex" });
+  await client.request(`/api/topics/${topic.id}/members`, { as: p.id });
+  const message = await client.request(`/api/topics/${topic.id}/messages`, { as: "human", to: p.id, body: "pending review", requestId: randomUUID() });
+  const env = { ...process.env, CODEX_THREAD_ID: f.nativeId, CODEX_APP_TOOLS_PIPE_PATH: f.pipe };
+  const args = [resolve("bin/mailbox.js"), "--url", server.url, "topic", "join", topic.id, "--as", p.id];
+  const joined = JSON.parse((await exec(process.execPath, args, { env, windowsHide: true })).stdout);
+  assert.equal(joined.notification.status, "ready");
+  await until(() => server.store.read(topic.id).messages[0]?.notified_at);
+  assert.equal(server.store.session(topic.id, "codex"), null);
+  const sends = () => f.calls.filter((call) => call.params?.tool === "send_message_to_thread");
+  assert.equal(sends().length, 1);
+  assert.equal(sends()[0].params.threadId, f.nativeId);
+  assert.equal(sends()[0].params.arguments.threadId, f.nativeId);
+  assert.ok(sends()[0].params.arguments.prompt.includes(`消息 #${message.id}`));
+  assert.equal(server.store.read(topic.id).messages[0].ack_at, null);
+  assert.equal(f.calls.some((call) => call.params?.tool === "create_thread"), false);
+  await exec(process.execPath, args, { env, windowsHide: true });
+  assert.equal(sends().length, 1, "rejoining never repeats a submitted notification");
+  for (const output of [joined, await client.request("/api/state")]) {
+    assert.equal(JSON.stringify(output).includes(f.pipe), false);
+    assert.equal(JSON.stringify(output).includes(f.nativeId), false);
+  }
+  const other = sessionNotification(p, {}, { CODEX_THREAD_ID: f.caller, CODEX_APP_TOOLS_PIPE_PATH: f.pipe });
+  await assert.rejects(client.request(`/api/topics/${topic.id}/members`, { as: p.id, notification: other }), /另一入口/);
+});
+
+test("desktop detection honors an explicit WS endpoint and rejects thread impersonation", () => {
+  const env = { CODEX_THREAD_ID: "own", CODEX_APP_TOOLS_PIPE_PATH: "own-pipe", MAILBOX_CODEX_TOKEN: "unused-secret" };
+  assert.deepEqual(sessionNotification({ kind: "codex" }, {}, env), {
+    thread: "own", app: { pipe: "own-pipe", threadId: "own" }, maxMessages: undefined,
+  });
+  assert.throws(() => sessionNotification({ kind: "codex" }, { thread: "other" }, env), /自身登记/);
+  const native = sessionNotification({ kind: "codex" }, { endpoint: "ws://127.0.0.1:4500", thread: "explicit" }, env);
+  assert.equal(native.app, undefined);
+  assert.equal(native.endpoint, "ws://127.0.0.1:4500");
+  assert.equal(native.thread, "explicit");
+  assert.equal(sessionNotification({ kind: "codex" }, { manual: true }, env), undefined);
+});
+
+test("invalid desktop registration cannot silently fall back to CLI or bind a recipient", async (t) => {
+  const f = await fixture(t);
+  const p = await f.client.request("/api/participants", { name: "invalid-desktop", kind: "codex" });
+  const member = `/api/topics/${f.topic.id}/members`;
+  for (const notification of [
+    { thread: f.nativeId, app: { pipe: f.pipe, threadId: f.caller } },
+    { thread: f.nativeId, app: { pipe: "https://not-local", threadId: f.nativeId } },
+    { thread: f.nativeId, endpoint: "ws://127.0.0.1:4500", app: { pipe: f.pipe, threadId: f.nativeId } },
+  ]) await assert.rejects(f.client.request(member, { as: p.id, notification }), /409/);
+  assert.equal((await f.client.request("/api/state")).recipients.length, 0);
+});
+
+test("a failed CLI route can recover only to the same task's verified desktop entry", async (t) => {
+  const f = await fixture(t);
+  const p = f.app.store.createParticipant({ name: "recover", kind: "codex" });
+  const recipients = new NativeRecipients(f.app.store, () => f.app.url, () => {}, new CodexApp({ env: f.env }));
+  t.after(() => recipients.close());
+  const oldTarget = { kind: "codex", thread: f.nativeId, token: null, maxMessages: 20 };
+  recipients.join(f.topic.id, p.id, oldTarget);
+  const target = await recipients.prepare(p, { thread: f.nativeId, app: { pipe: f.pipe, threadId: f.nativeId } });
+  assert.throws(() => recipients.join(f.topic.id, p.id, target), /另一入口/);
+  recipients.routes.get(p.id).status = "error";
+  assert.throws(() => recipients.join(f.topic.id, p.id, { ...target, thread: f.caller }), /另一入口/);
+  recipients.join(f.topic.id, p.id, target);
+  assert.equal(recipients.routes.get(p.id).target.transport, "desktop-app");
+  assert.equal(recipients.status()[0].status, "ready");
 });

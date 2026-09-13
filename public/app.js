@@ -185,6 +185,7 @@ function renderDetails() {
     if (route)
       return {
         ready: "通知入口已登记",
+        retrying: "入口暂不可达，正在自动重试",
         stopping: "通知正在停止",
         error: "! 投递失败，重新加入可重试",
       }[route.status];
@@ -274,10 +275,12 @@ function renderMessages() {
       .map((m) => {
         const delivery = m.recipients
           .map((recipient) => {
+            const retrying = state.recipients.some((route) =>
+              route.participant_id === recipient.recipient_id && route.status === "retrying" && route.retry_message_id === m.id);
             const status = recipient.ack_at
               ? "已确认"
               : recipient.error
-                ? "投递失败"
+                ? retrying ? "等待自动重试" : "投递失败"
                 : recipient.notified_at
                   ? "已投递"
                   : "待投递";

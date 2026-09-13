@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import net from "node:net";
+import { nativeConnectFailure } from "./notification-recovery.js";
 
 const exec = promisify(execFile);
 
@@ -78,7 +79,7 @@ export function writeClaude({ socket, token, text, signal }) {
   if (signal?.aborted) return Promise.reject(signal.reason);
   return new Promise((resolve, reject) => {
     const connection = net.createConnection(socket);
-    let settled = false;
+    let settled = false, sent = false;
     const finish = (error) => {
       if (settled) return;
       settled = true;
@@ -100,7 +101,7 @@ export function writeClaude({ socket, token, text, signal }) {
     signal?.addEventListener("abort", abort, { once: true });
     connection.on("error", (error) =>
       finish(
-        new Error(`Claude 原生收件入口不可达：${error.code ?? "连接错误"}`),
+        nativeConnectFailure(`Claude 原生收件入口不可达：${error.code ?? "连接错误"}`, error, sent),
       ),
     );
     connection.on("close", () => {
@@ -114,6 +115,7 @@ export function writeClaude({ socket, token, text, signal }) {
         type: "user",
         message: { role: "user", content: text },
       });
+      sent = true;
       connection.end(auth + message + "\n", () => finish());
     });
   });
