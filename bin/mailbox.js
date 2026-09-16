@@ -3,6 +3,12 @@ import { parseArgs } from "node:util";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { Client } from "../src/client.js";
+import {
+  removeRouteCookie,
+  routeCookieFor,
+  routeCookiesFor,
+  saveRouteCookie,
+} from "../src/route-cookies.js";
 
 const help = `Agent Mailbox · 本机主题讨论信箱
 
@@ -48,11 +54,11 @@ connect 在目标 agent 会话内部执行，使用自身原生消息入口；--
 Codex 使用 CODEX_THREAD_ID 或 --thread；Claude 使用自身导出的消息地址和 token。
 --agent-bin 指定目标 agent 程序；--list 查看参与者，--preview 只检查参数。
 session create 仅创建 Codex 会话，默认复用已接入的桌面 App；Claude 请在已有会话内加入信箱。
-codex app connect 在当前 Codex App 任务内执行，仅登记自身 App 入口；Claude 之后可直接创建。
+codex app connect 在当前 Codex App 任务内执行，登记当前 App 地址并用本机路由 cookie 批量恢复 Codex 收件入口；Claude 之后可直接创建。
 只有明确传 --endpoint 才使用独立 App Server，不会自动启动或回退到 4500。
 session create 成功仅表示新会话已登记收件入口；讨论结果查看 read，处理进度查看 ACK。
 Codex token 如有需要通过 MAILBOX_CODEX_TOKEN 环境变量提供。
-topic join 在目标会话中自动登记通知入口，无需 connect 或后台进程。
+topic join 在目标会话中首次登记通知入口并保存路由 cookie；后续普通 CLI 命令自动恢复 Codex 路由，无需后台进程。
 --manual 仅加入主题并手动收信；原生入口缺失时不会静默改为手动模式。`;
 
 const controller = new AbortController();
@@ -107,6 +113,20 @@ try {
     process.exit(0);
   }
   const client = new Client(v.url);
+  const isAppCommand = p[0] === "codex" && p[1] === "app";
+  if (!isAppCommand &&
+      process.env.CODEX_APP_TOOLS_PIPE_PATH && process.env.CODEX_THREAD_ID) {
+    const routeCookies = await routeCookiesFor(client.url);
+    if (routeCookies.length) {
+      const { appContext } = await import("../src/codex-app.js");
+      await client.request("/api/codex/resume", {
+        context: appContext(),
+        routeCookies,
+      }, "POST", { timeout: 10000, signal: controller.signal }).catch((error) => {
+        console.error(JSON.stringify({ warning: `Codex 路由自动恢复失败：${error.message}` }));
+      });
+    }
+  }
   const requireValue = (key) => {
     if (!v[key]) throw new Error(`缺少 --${key}`);
     return v[key];
@@ -158,7 +178,10 @@ try {
       const { appContext } = await import("../src/codex-app.js");
       const context = appContext();
       if (!context.pipe || !context.threadId) throw new Error("请在当前 Codex App 的任务内执行此命令；不接受手填或猜测其他任务的入口");
-      result = await client.request("/api/codex/connect", { context });
+      result = await client.request("/api/codex/connect", {
+        context,
+        routeCookies: await routeCookiesFor(client.url),
+      });
     } else result = await client.request("/api/codex/status");
   } else if (p[0] === "session" && ["create", "info"].includes(p[1]) && p[2] === "codex") {
     const { createCodexSession, codexSessionPath } = await import("../src/sessions.js");
@@ -196,6 +219,8 @@ try {
   } else if (p[0] === "disconnect") {
     const { disconnectMailbox } = await import("../src/connect.js");
     result = await disconnectMailbox(client, requireValue("as"));
+    if (result.route_cookie_revoked)
+      await removeRouteCookie(client.url, result.participant_id);
   } else if (p[0] === "project" && p[1] === "create")
     result = await client.request("/api/projects", {
       name: requireValue("name"),
@@ -269,10 +294,28 @@ try {
         await new CodexApp().showInSidebar(notification.thread, { signal: controller.signal });
       }
     }
-    result = await client.request(`${topicPath(p[2])}/members`, {
+    const joinPath = `${topicPath(p[2])}/members`;
+    const savedRouteCookie = notification?.app
+      ? await routeCookieFor(client.url, participant.id)
+      : null;
+    const joinBody = {
       as: participant.id,
       notification,
-    });
+      ...(savedRouteCookie ? { routeCookie: savedRouteCookie } : {}),
+    };
+    try {
+      result = await client.request(joinPath, joinBody);
+    } catch (error) {
+      if (!savedRouteCookie || error.status !== 409 || !error.message.includes("路由 cookie 无效"))
+        throw error;
+      await removeRouteCookie(client.url, participant.id);
+      delete joinBody.routeCookie;
+      result = await client.request(joinPath, joinBody);
+    }
+    if (result.route_cookie) {
+      await saveRouteCookie(client.url, participant.id, result.route_cookie);
+      delete result.route_cookie;
+    }
   } else if (p[0] === "topic" && p[1] === "status")
     result = await client.request(
       topicPath(p[2]),

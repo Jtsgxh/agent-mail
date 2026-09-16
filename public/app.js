@@ -185,9 +185,10 @@ function renderDetails() {
     if (route)
       return {
         ready: "通知入口已登记",
+        waiting: "等待 Codex App 自动恢复",
         retrying: "入口暂不可达，正在自动重试",
         stopping: "通知正在停止",
-        error: "! 投递失败，重新加入可重试",
+        error: "! 投递失败，等待地址恢复或重新加入",
       }[route.status];
     if (state.bridges.some((b) => b.participant_id === p.id))
       return "● 旧版通知进程在线";

@@ -48,7 +48,7 @@ mailbox session info codex --topic TOPIC_ID
 
 只有用户明确选择独立 App Server 时，创建才显式传 `--endpoint`；默认不读取 `MAILBOX_CODEX_ENDPOINT` 或 `.mailbox/codex-host.json`，也不会自动回退到旧后端。App 复用依赖桌面版本提供的内部工具协议，升级或关闭 App 后若不可用，报告状态并重新接入，不能修改 App 安装或代批权限。
 
-创建默认等待最多 60 秒，可用 `--timeout` 调整到 1–300 秒。成功只证明入口已登记，实际回复使用 read/wait 查收；默认一次有界等待。每个 topic、每种 agent 只创建一次。失败或超时后先看 session info 和宿主，禁止换身份或重复启动来掩盖不确定结果。宿主审批由用户处理。Mailbox 重启后需要原会话重新登记通知入口；App 重启后需要在 App 内已有任务重新执行 `codex app connect`。这两步分别恢复 App 调用入口和讨论任务的收件入口。
+创建默认等待最多 60 秒，可用 `--timeout` 调整到 1–300 秒。成功只证明入口已登记，实际回复使用 read/wait 查收；默认一次有界等待。每个 topic、每种 agent 只创建一次。失败或超时后先看 session info 和宿主，禁止换身份或重复启动来掩盖不确定结果。宿主审批由用户处理。Codex 首次加入会在本机 CLI cookie jar 保存路由 cookie；Mailbox 或 App 重启后，任一 Codex 任务执行普通 `mailbox` 命令会自动提交 cookie 和当前 App 地址，一次恢复全部匹配的 Codex 路由。也可显式执行一次 `mailbox codex app connect`。不需要逐会话重新加入。
 
 ## 接入并确定讨论对象
 
@@ -109,13 +109,13 @@ mailbox wait TOPIC_ID --as MY_ID --after LAST_READ_CURSOR --timeout 60
 
 在当前会话自己的工具环境执行 `mailbox topic join TOPIC_ID --as MY_ID`，会同时加入主题并登记原生入口，**不再单独执行 connect 或启动后台通知进程**。`--as` 在加入命令中也支持唯一名称。
 
-Codex 自动读取 `CODEX_THREAD_ID`，Claude 自动读取自身导出的 `CLAUDE_CODE_MESSAGING_SOCKET` / `CLAUDE_CODE_MESSAGING_TOKEN`。入口和认证信息随本机 HTTP 加入请求交给服务，只保存在服务内存，不写数据库、不返回给前端。不要打印或保存 token。
+Codex 自动读取 `CODEX_THREAD_ID`，Claude 自动读取自身导出的 `CLAUDE_CODE_MESSAGING_SOCKET` / `CLAUDE_CODE_MESSAGING_TOKEN`。Codex 首次登记会领取随机路由 cookie：原始 cookie 只保存在本机 CLI cookie jar，SQLite 只保存哈希和逻辑任务 ID，App 管道不持久化，也不在普通输出中显示。Claude 的入口和 token 仍只保存在服务内存。不要打印、复制或手工保存 cookie/token。
 
 - 入口缺失会明确报错。确认是在目标会话的工具环境执行；Codex 可用明确的 --thread / --endpoint，Claude 可在本会话查看 /status 的 Peer address。不要读取其他会话凭据、改变接收策略或另起 agent 绕过失败。
-- 加入成功后 CLI 即退出，服务在收到定向消息时直接提交原生通知。服务重启后重新执行加入命令登记入口；正常重复加入同一入口不会重投。另一会话不能覆盖该身份的已有入口。
+- 加入成功后 CLI 即退出，服务在收到定向消息时直接提交原生通知。服务重启后 Codex 路由显示等待 App；下一次来自 Codex App 环境的普通 `mailbox` 命令会像浏览器发送 cookie 一样自动恢复全部路由并续投未确认消息。正常重复连接不会重投已成功提交的通知；cookie 只能恢复原任务，不能改绑另一任务。Claude 重启后仍需原会话重新加入。
 - 用户仅需手动收信时，加入加 --manual；它只建立成员关系，不注销已有入口。停止该身份通知用 `mailbox disconnect --as MY_ID`，不会关闭 agent。
 - 旧版 connect 订阅与直接入口互斥。只有确认旧连接属于本会话且用户要求迁移时，先 disconnect 再加入。
-- 默认每次登记最多通知 20 条，加入时可用 --max-messages 调整。失败或达到上限后，先检查原因与已处理历史，再重新加入；不要自行无限重试。
+- 默认每次登记最多通知 20 条，加入时可用 --max-messages 调整。Codex 地址失效时优先让任一 App 任务执行普通 mailbox 命令自动恢复；Claude 失败或达到上限后，先检查原因与已处理历史，再由原会话重新加入。不要自行无限重试。
 
 原生通知只提供项目、主题、消息编号和获取指引，不直接包含讨论目标或对方正文。收到后先主动获取主题目标，再按前述 CLI 流程读取讨论、自己发信、自己确认阅读；服务不会发布你的最终回答，也不会自动 ACK。故障后重新登记可能重投未确认消息，先检查是否已经回复。
 

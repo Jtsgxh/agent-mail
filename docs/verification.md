@@ -142,3 +142,10 @@ Claude 原生入口的测试使用真实本机命名管道和模拟接收端，�
 - 新版由信箱服务直接投递到真实 Claude 模型的完整收发。本机管道与认证协议测试已通过，实际会话需重新加入后验证；旧版自定义 Channel 的真实模型消费也未验收。
 - 任意 Codex 桌面或 CLI 会话都能被 queue 路由到。已验证独立测试 App Server，以及旧版投递到当前桌面会话；实际路由仍取决于目标宿主，必要时明确提供 --endpoint。
 - 多机、多用户认证隔离、自动启动 agent、自动恢复已退出的 agent 进程，不属于本版本功能。
+
+## Codex 路由 cookie 与无感恢复（2026-09-16）
+
+- Codex 桌面任务首次 `topic join` 后，CLI 在本机 cookie jar 保存随机路由 cookie；SQLite 新增的 `notification_routes` 只保存 SHA-256 哈希、参与者、任务 ID 和消息上限，不保存原始 cookie 或 App 管道。普通路由 CLI/state 输出不包含 cookie、任务 ID 或管道。
+- Mailbox 重启后持久路由显示为等待 App。任一 Codex 任务执行普通 `mailbox` 命令时，CLI 自动提交同一信箱的 cookie jar 与当前 App 管道；服务验证哈希后一次恢复全部匹配路由，未确认且尚未成功投递的消息自动续投。显式 `mailbox codex app connect` 使用同一批量恢复路径。
+- 路由 cookie 只能恢复原参与者绑定的原任务，不能更换任务；`disconnect` 同时注销内存入口、删除服务端哈希并让 CLI 删除本地 cookie。Claude 原生入口/token 仍只在内存中，不进入 Codex cookie jar。
+- 新增真实 SQLite 重启、App 管道换址和 CLI 子进程测试：首次加入生成 cookie，确认原文不出现在 CLI/state/SQLite；重启后不执行 `topic join`，仅运行普通 `mailbox inbox` 即恢复并把待投递消息送到原任务；随后重复 `codex app connect` 不重复发送。另覆盖并发 cookie jar 更新、注销撤销、未知结果阻止自动重放。`npm test` 97/97，`npm run check` 和 `git diff --check` 通过。

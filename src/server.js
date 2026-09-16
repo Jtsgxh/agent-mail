@@ -9,6 +9,7 @@ import { codexHostStatus } from "./sessions.js";
 import { startCodexHost } from "../scripts/start-codex.js";
 import { CodexApp } from "./codex-app.js";
 import { launchDesktopSession } from "./desktop-sessions.js";
+import { createRouteCookie, hashRouteCookie } from "./route-cookies.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const assets = new Map([
@@ -51,6 +52,43 @@ export async function startServer({
     changed,
     codexApp,
   );
+  const recipientStatuses = () => {
+    const active = recipients.status();
+    const activeIds = new Set(active.map((route) => route.participant_id));
+    return [
+      ...active,
+      ...store.notificationRoutes()
+        .filter((route) => !activeIds.has(route.participant_id))
+        .map((route) => ({
+          participant_id: route.participant_id,
+          kind: route.kind,
+          status: route.resume_blocked ? "error" : "waiting",
+          registered_at: route.updated_at,
+          error: route.error ?? "等待 Codex App 提供当前投递地址",
+          retry_at: null,
+          retry_count: 0,
+          retry_message_id: null,
+        })),
+    ];
+  };
+  const authenticatedRoutes = (cookies) => {
+    if (cookies === undefined) return { routes: [], rejected: 0 };
+    if (!Array.isArray(cookies) || cookies.length > 200)
+      throw new HttpError(400, "routeCookies 必须是最多 200 项的数组");
+    const routes = [], seen = new Set();
+    let rejected = 0;
+    for (const item of cookies) {
+      const hash = hashRouteCookie(item?.cookie);
+      const route = hash && store.routeByCookieHash(hash);
+      if (!route || route.participant_id !== item?.participantId || seen.has(route.participant_id)) {
+        rejected++;
+        continue;
+      }
+      seen.add(route.participant_id);
+      routes.push(route);
+    }
+    return { routes, rejected };
+  };
   const server = http.createServer(async (req, res) => {
     const send = (data, status = 200) => {
       res.writeHead(status, {
@@ -173,9 +211,15 @@ export async function startServer({
       const disconnect = path.match(/^\/api\/bridge\/([^/]+)$/);
       if (req.method === "DELETE" && disconnect) {
         store.participant(disconnect[1]);
-        if (await recipients.remove(disconnect[1])) {
+        const stopped = await recipients.remove(disconnect[1]);
+        const revoked = store.deleteNotificationRoute(disconnect[1]);
+        if (stopped || revoked) {
           changed();
-          return send({ participant_id: disconnect[1], status: "stopped" });
+          return send({
+            participant_id: disconnect[1],
+            status: "stopped",
+            route_cookie_revoked: revoked,
+          });
         }
         const stream = bridgeStreams.get(disconnect[1]);
         if (!stream) throw new HttpError(409, "该参与者没有活动通知连接");
@@ -190,8 +234,31 @@ export async function startServer({
       if (req.method === "GET" && path === "/api/codex/status")
         return send(await codexApp.status());
       if (req.method === "POST" && path === "/api/codex/connect") {
-        try { return send(await codexApp.connect(body.context)); }
+        try {
+          const status = await codexApp.connect(body.context);
+          const authenticated = authenticatedRoutes(body.routeCookies);
+          const resumed = await recipients.resumeCodex(authenticated.routes, body.context.pipe);
+          changed();
+          return send({
+            ...status,
+            resumed_routes: resumed.length,
+            rejected_route_cookies: authenticated.rejected,
+          });
+        }
         catch (error) { throw new HttpError(503, error.message); }
+      }
+      if (req.method === "POST" && path === "/api/codex/resume") {
+        try {
+          const status = await codexApp.refresh(body.context);
+          const authenticated = authenticatedRoutes(body.routeCookies);
+          const resumed = await recipients.resumeCodex(authenticated.routes, body.context.pipe);
+          changed();
+          return send({
+            ...status,
+            resumed_routes: resumed.length,
+            rejected_route_cookies: authenticated.rejected,
+          });
+        } catch (error) { throw new HttpError(503, error.message); }
       }
       if (req.method === "GET" && path === "/api/codex/host/status")
         return send(codexStarting
@@ -218,7 +285,7 @@ export async function startServer({
           projects: store.projects(),
           participants: store.participants(),
           bridges: [...bridges.values()],
-          recipients: recipients.status(),
+          recipients: recipientStatuses(),
         });
       if (req.method === "GET" && path === "/api/participants")
         return send(store.participants());
@@ -283,8 +350,7 @@ export async function startServer({
             session && {
               ...session,
               notification:
-                recipients
-                  .status()
+                recipientStatuses()
                   .find((r) => r.participant_id === session.participant_id) ??
                 null,
             },
@@ -338,6 +404,7 @@ export async function startServer({
           return send(store.members(id));
         if (req.method === "POST" && action === "members") {
           let target;
+          let routeCookie;
           const session = store.session(id, "codex");
           const desktop = session?.transport === "desktop-app" && session.participant_id === body.as;
           if (body.notification !== undefined) {
@@ -357,14 +424,35 @@ export async function startServer({
               throw new HttpError(409, "此身份仍有旧版通知连接");
           }
           if (desktop && target) store.bindDesktopSession(id, body.as, target.thread);
-          const m = target
-            ? recipients.join(id, body.as, target)
-            : store.join(id, body.as);
+          let m;
+          if (target?.transport === "desktop-app") {
+            const current = store.notificationRoute(body.as);
+            const presentedHash = hashRouteCookie(body.routeCookie);
+            if (body.routeCookie !== undefined &&
+                (!presentedHash || presentedHash !== current?.cookie_hash))
+              throw new HttpError(409, "路由 cookie 无效；请从原 Codex 任务重新登记");
+            if (current && current.native_id !== target.thread)
+              throw new HttpError(409, "此身份已登记另一入口（另一 Codex 任务）；路由 cookie 不能更换任务");
+            if (!current || body.routeCookie === undefined) routeCookie = createRouteCookie();
+            m = store.join(id, body.as);
+            const route = store.saveNotificationRoute(body.as, {
+              kind: "codex",
+              nativeId: target.thread,
+              cookieHash: routeCookie ? hashRouteCookie(routeCookie) : current.cookie_hash,
+              maxMessages: target.maxMessages,
+            });
+            await recipients.resumeCodex([route], target.app.pipe);
+          } else {
+            m = target
+              ? recipients.join(id, body.as, target)
+              : store.join(id, body.as);
+          }
           changed();
           return send({
             ...m,
+            ...(routeCookie ? { route_cookie: routeCookie } : {}),
             notification:
-              recipients.status().find((r) => r.participant_id === body.as) ??
+              recipientStatuses().find((r) => r.participant_id === body.as) ??
               null,
           });
         }

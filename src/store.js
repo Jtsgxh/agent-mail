@@ -59,6 +59,14 @@ export class Store {
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
         PRIMARY KEY(topic_id,kind)
       );
+      CREATE TABLE IF NOT EXISTS notification_routes (
+        participant_id TEXT PRIMARY KEY REFERENCES participants(id),
+        kind TEXT NOT NULL, native_id TEXT NOT NULL,
+        cookie_hash TEXT NOT NULL UNIQUE, max_messages INTEGER NOT NULL DEFAULT 20,
+        resume_blocked INTEGER NOT NULL DEFAULT 0, error TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      );
       CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, topic_id TEXT NOT NULL REFERENCES topics(id),
         author_id TEXT NOT NULL REFERENCES participants(id), body TEXT NOT NULL,
@@ -92,6 +100,11 @@ export class Store {
       this.db.exec("ALTER TABLE sessions ADD COLUMN transport TEXT NOT NULL DEFAULT 'native'");
     if (!sessionColumns.some((column) => column.name === "launch_ref"))
       this.db.exec("ALTER TABLE sessions ADD COLUMN launch_ref TEXT");
+    const routeColumns = this.db.prepare("PRAGMA table_info(notification_routes)").all();
+    if (!routeColumns.some((column) => column.name === "resume_blocked"))
+      this.db.exec("ALTER TABLE notification_routes ADD COLUMN resume_blocked INTEGER NOT NULL DEFAULT 0");
+    if (!routeColumns.some((column) => column.name === "error"))
+      this.db.exec("ALTER TABLE notification_routes ADD COLUMN error TEXT");
     // Preserve old per-message receipts while changing their key to message + recipient.
     this.db.exec("BEGIN");
     try {
@@ -125,6 +138,57 @@ export class Store {
   }
   close() {
     this.db.close();
+  }
+  notificationRoute(participant) {
+    this.participant(participant);
+    return this.db
+      .prepare("SELECT * FROM notification_routes WHERE participant_id=?")
+      .get(participant) ?? null;
+  }
+  notificationRoutes() {
+    return this.db
+      .prepare("SELECT participant_id,kind,native_id,max_messages,resume_blocked,error,created_at,updated_at FROM notification_routes ORDER BY participant_id")
+      .all();
+  }
+  saveNotificationRoute(participant, { kind, nativeId, cookieHash, maxMessages }) {
+    const owner = this.participant(participant);
+    if (owner.kind !== "codex" || kind !== "codex")
+      throw new HttpError(400, "持久路由目前只支持 Codex");
+    nativeId = required(nativeId, "nativeId");
+    cookieHash = required(cookieHash, "cookieHash");
+    maxMessages = number(maxMessages, "maxMessages", 1);
+    const current = this.notificationRoute(participant);
+    if (current && current.native_id !== nativeId)
+      throw new HttpError(409, "此身份已登记另一入口（另一 Codex 任务）；路由 cookie 不能更换任务");
+    this.db.prepare(`INSERT INTO notification_routes(
+      participant_id,kind,native_id,cookie_hash,max_messages
+    ) VALUES (?,?,?,?,?) ON CONFLICT(participant_id) DO UPDATE SET
+      cookie_hash=excluded.cookie_hash,max_messages=excluded.max_messages,
+      resume_blocked=0,error=NULL,
+      updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`)
+      .run(participant, kind, nativeId, cookieHash, maxMessages);
+    return this.notificationRoute(participant);
+  }
+  routeByCookieHash(cookieHash) {
+    if (!cookieHash) return null;
+    return this.db
+      .prepare("SELECT * FROM notification_routes WHERE cookie_hash=?")
+      .get(cookieHash) ?? null;
+  }
+  setNotificationRouteFailure(participant, error, blocked) {
+    if (!this.db.prepare("SELECT 1 FROM notification_routes WHERE participant_id=?").get(participant))
+      return false;
+    if (error !== null) error = required(error, "error", 2000);
+    this.db.prepare(`UPDATE notification_routes SET resume_blocked=?,error=?,
+      updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE participant_id=?`)
+      .run(blocked ? 1 : 0, error, participant);
+    return true;
+  }
+  deleteNotificationRoute(participant) {
+    this.participant(participant);
+    return this.db
+      .prepare("DELETE FROM notification_routes WHERE participant_id=?")
+      .run(participant).changes > 0;
   }
   session(topic, kind) {
     this.topic(topic);

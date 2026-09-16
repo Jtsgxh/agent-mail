@@ -21,6 +21,29 @@ export class NativeRecipients {
     this.retryDelays = [...retryDelays];
     this.verifiedDesktopTargets = new WeakMap();
   }
+  route(id, target, { registeredAt = new Date().toISOString(), preserveDelivered = false } = {}) {
+    const sent = preserveDelivered
+      ? new Set(this.store.inbox(id).notifications
+        .filter((message) => message.notified_at)
+        .map((message) => message.id))
+      : new Set();
+    const route = {
+      registration: Symbol("native recipient"),
+      target,
+      status: "ready",
+      registered_at: registeredAt,
+      sent,
+      count: 0,
+      controller: new AbortController(),
+      task: null,
+      retryCount: 0,
+      retryTimer: null,
+      retryAt: null,
+      retryMessageId: null,
+    };
+    this.routes.set(id, route);
+    return route;
+  }
   async prepare(participant, input, { desktop = false } = {}) {
     if (!input || typeof input !== "object" || Array.isArray(input))
       throw new HttpError(400, "notification 必须是会话入口对象");
@@ -121,21 +144,51 @@ export class NativeRecipients {
       clearTimeout(old.retryTimer);
       old.controller.abort(new Error("原会话已重新登记入口"));
     }
-    this.routes.set(id, {
-      registration: Symbol("native recipient"),
-      target,
-      status: "ready",
-      registered_at: new Date().toISOString(),
-      sent: new Set(),
-      count: 0,
-      controller: new AbortController(),
-      task: null,
-      retryCount: 0,
-      retryTimer: null,
-      retryAt: null,
-      retryMessageId: null,
-    });
+    this.route(id, target);
     return member;
+  }
+  async resumeCodex(routes, pipe) {
+    const resumed = [];
+    for (const persisted of routes) {
+      if (persisted.resume_blocked) continue;
+      const id = persisted.participant_id;
+      const old = this.routes.get(id);
+      const target = {
+        kind: "codex",
+        thread: persisted.native_id,
+        token: null,
+        maxMessages: persisted.max_messages,
+        transport: "desktop-app",
+        app: { pipe, threadId: persisted.native_id },
+      };
+      if (old?.target.transport === "desktop-app" &&
+          old.target.thread === target.thread && old.target.app?.pipe === pipe) {
+        if (["error", "retrying"].includes(old.status) && !old.task) {
+          clearTimeout(old.retryTimer);
+          old.status = "ready";
+          old.retryAt = null;
+          old.retryMessageId = null;
+          old.retryCount = 0;
+          old.sent = new Set(this.store.inbox(id).notifications
+            .filter((message) => message.notified_at)
+            .map((message) => message.id));
+          resumed.push(id);
+        }
+        continue;
+      }
+      if (old?.task) await old.task;
+      if (old) {
+        clearTimeout(old.retryTimer);
+        old.controller.abort(new Error("Codex App 使用路由 cookie 更新了投递地址"));
+      }
+      this.route(id, target, {
+        registeredAt: persisted.updated_at,
+        preserveDelivered: true,
+      });
+      resumed.push(id);
+    }
+    if (resumed.length) this.changed();
+    return resumed;
   }
   status() {
     return [...this.routes].map(([id, route]) => ({
@@ -219,6 +272,7 @@ export class NativeRecipients {
         // Deletion may have committed while the transport was completing.
         signal.throwIfAborted();
         this.store.delivery(message.id, id);
+        this.store.setNotificationRouteFailure(id, null, false);
         route.count++;
         route.retryCount = 0;
         route.retryAt = null;
@@ -245,6 +299,11 @@ export class NativeRecipients {
           route.retryAt = null;
           route.retryMessageId = null;
         }
+        this.store.setNotificationRouteFailure(
+          id,
+          route.error,
+          !error.retryableNotification,
+        );
         this.store.delivery(message.id, id, route.error);
         this.changed();
         return;

@@ -31,6 +31,7 @@ mailbox --help
 | `MAILBOX_DB` | 项目内 `.mailbox/mailbox.db` | SQLite 数据文件 |
 | `MAILBOX_URL` | `http://127.0.0.1:4317` | CLI/桥接访问地址，也可传 `--url` |
 | `MAILBOX_CODEX_TOKEN` | 无 | 若目标 App Server 要求 token，用 Bearer header 提供 |
+| `MAILBOX_ROUTE_COOKIE_JAR` | `%LOCALAPPDATA%\AgentMailbox\route-cookies.json` | Codex 逻辑路由 cookie；主要用于测试或隔离实例时覆盖路径 |
 
 第一版面向同一台机器、同一个可信用户。参与者 ID 是会话标识，不是身份认证；不是多人权限隔离产品。HTTP 服务拒绝跨站请求，不提供远程部署模式。
 
@@ -113,7 +114,7 @@ mailbox read TOPIC_ID
 
 `--cwd` 必须位于 Codex App 已保存的本机项目中。信箱选择包含该路径的最具体项目；Git 项目按 App 默认规则创建独立工作区，非 Git 项目直接使用保存目录。讨论提示会明确给出请求的源目录，避免把工作区或上级项目误当成阅读对象。没有匹配项目时在预留身份前报错，需先在 App 添加对应目录。创建可能先返回 `launch_ref`（工作区准备编号），它不是原生任务 ID；新 Codex 登记后才绑定正式 `native_id`。
 
-App 适配器使用当前桌面版本提供的本机工具管道（当前验证版本见验收记录），保留真实调用任务上下文，由 App 执行任务权限校验；不修改 App 安装、私有后端或模型配置。这是内部协议，App 升级后可能需要适配；缺少工具、调用上下文失效或协议变化会明确报错，不会自动另起后端。入口仅存服务内存；App 重启后需在 App 内重新执行接入命令，Mailbox 重启后还需各讨论任务重新加入。
+App 适配器使用当前桌面版本提供的本机工具管道（当前验证版本见验收记录），保留目标任务 ID，由 App 执行任务权限校验；不修改 App 安装、私有后端或模型配置。这是内部协议，App 升级后可能需要适配；缺少工具或协议变化会明确报错，不会自动另起后端。首次登记会向本机 CLI cookie jar 写入一个随机路由 cookie；SQLite 只保存 cookie 哈希、参与者和任务 ID，不保存原始 cookie 或 App 管道。此后任一 Codex 任务执行普通 `mailbox` 命令时都会自动提交 cookie jar 和当前 App 管道，一次恢复全部匹配路由。
 
 仅在明确选择独立 WebSocket 后端时运行 `node scripts/start-codex.js`，并给 `session create codex` 显式传 `--endpoint ws://127.0.0.1:4500`。默认 App 创建不读取 `MAILBOX_CODEX_ENDPOINT` 或 `.mailbox/codex-host.json`，不会因旧配置继续连接 4500。原启动脚本和 `/api/codex/host/status`、`/api/codex/host/start` 仅保留给显式使用旧后端的调用者，网页不再启动它。
 
@@ -121,7 +122,7 @@ App 适配器使用当前桌面版本提供的本机工具管道（当前验证�
 
 `session create` 默认最多等待 60 秒的入口登记（`--timeout 1–300`），成功返回绑定记录与 `notification.status=ready`；这不证明已回信。状态 `reserved` 表示已预留身份，`submitted` 表示启动调用已确认，`uncertain` 表示启动过程未确认。是否当前已登记以 `notification.status=ready` 为准；这些状态都不证明模型已经回复。启动失败或调用超时可能已创建原生会话，记录及原生 ID 会保留，禁止盲目重试。以 `session info`、宿主状态、消息和 ACK 分别核查。新会话若卡在权限审批，请在宿主处理；Mailbox 不代批权限。
 
-Mailbox 重启会保留绑定和讨论，但清除内存中的通知入口，需在原会话重新执行加入。Claude 进程退出或重启也可能使旧管道失效；此版本不负责自动恢复退出的 Claude 进程或替换入口。每个 topic 的会话只创建一次，不采用每封信都重新 `exec/resume` 的调度方式。
+Mailbox 重启会保留 Codex 逻辑路由并显示“等待 App”；之后任一带 cookie jar 的 Codex CLI 命令，或一次 `mailbox codex app connect`，会用当前 App 地址恢复全部 Codex 路由并续投未确认消息，不需要逐主题重新加入。Claude 进程退出或重启仍可能使旧管道和 token 失效；Claude 不使用 Codex 路由 cookie，仍需原会话重新登记。每个 topic 的会话只创建一次，不采用每封信都重新 `exec/resume` 的调度方式。
 
 ### 使用已有会话
 
@@ -135,7 +136,7 @@ Mailbox 重启会保留绑定和讨论，但清除内存中的通知入口，需
 
 ## 加入即收信
 
-右侧“参与者”和“独立会话”显示未登记通知入口、通知入口已登记、正在自动重试、投递失败或正在停止。Codex 和 Claude 都需要在自身会话中登记入口；Claude 直接使用自身收件管道，无需另建 App Server。右上角“信箱服务已连接”仅表示网页与 Mailbox 的事件连接正常。
+右侧“参与者”和“独立会话”显示未登记通知入口、等待 Codex App、通知入口已登记、正在自动重试、投递失败或正在停止。Codex 首次登记后由路由 cookie 自动恢复；Claude 仍需要在自身会话中登记入口。右上角“信箱服务已连接”仅表示网页与 Mailbox 的事件连接正常。
 
 让目标 agent 在自己的会话里执行一次加入命令：
 
@@ -144,12 +145,12 @@ mailbox topic join TOPIC_ID --as codex-review
 mailbox topic join TOPIC_ID --as claude-mailbox-rogue-tower
 ```
 
-只执行与本会话身份对应的命令。加入时 CLI 取得原生会话入口，随同加入请求提交给本机信箱服务；后续信箱直接投递，无需 `connect`、每个会话的后台通知进程或保持 CLI 运行。
+只执行与本会话身份对应的命令。首次加入时 CLI 取得原生会话入口并领取随机路由 cookie；原始 cookie 保存在本机 cookie jar，服务只保存哈希和逻辑任务 ID。后续信箱直接投递，无需每个会话的后台通知进程或保持 CLI 运行。
 
-- **Codex 桌面任务：** 无论由用户打开还是信箱创建，`topic join` 都会从当前任务自身的 `CODEX_APP_TOOLS_PIPE_PATH` / `CODEX_THREAD_ID` 取得桌面入口，服务验证后通过 App 任务工具递交通知。不要求已有 `session create` 记录，也不要求先为服务执行 `codex app connect`。每个收件入口保留自己的调用上下文，仅存内存；入口失效明确报错，不回退到 CLI。原先误走 CLI 且已失败的同一任务，可重新加入恢复桌面投递；不能改绑另一任务或覆盖仍正常工作的入口。
+- **Codex 桌面任务：** 无论由用户打开还是信箱创建，首次 `topic join` 都会从当前任务自身的 `CODEX_APP_TOOLS_PIPE_PATH` / `CODEX_THREAD_ID` 取得桌面入口并领取路由 cookie。不要求已有 `session create` 记录，也不要求先为服务执行 `codex app connect`。App 或 Mailbox 重启后，任一普通 Mailbox CLI 命令会自动用 cookie jar 把全部逻辑任务路由绑定到当前 App 管道；显式 `codex app connect` 也会执行同一批量恢复。cookie 只能恢复原任务，不能改绑另一任务。
 - **Codex CLI / 独立后端：** 没有桌面入口时仍使用 `codex queue`；普通终端可明确提供 `--thread SESSION_ID`，服务需能找到支持该命令的 Codex，可用 `--agent-bin` 指定程序。显式 `--endpoint ws://127.0.0.1:4500` 选择独立后端，优先于继承的桌面环境。桌面任务不能用 `--thread` 冒用另一任务的调用上下文。
 - **Claude：** 从本会话导出的 `CLAUDE_CODE_MESSAGING_SOCKET` / `CLAUDE_CODE_MESSAGING_TOKEN` 取得入口，服务直接写入本机命名管道或 Unix socket。不启动 Claude，不修改接收策略。缺少入口时加入命令明确报错；可在目标 Claude `/status` 查看 Peer address。
-- **入口生命周期：** 入口及 token 只保存在服务内存，不写 SQLite、日志或公开接口。服务重启后需要在原会话重新执行加入命令。会话退出或地址失效时投递报错，消息仍保留；重新加入可重试。相同入口正常重复加入不会重复通知；同一身份不能悄悄改绑另一会话。
+- **入口生命周期：** 原始路由 cookie、App 管道和 Claude token 不写 SQLite、日志或公开状态；SQLite 只保存 Codex cookie 哈希和逻辑任务 ID。服务重启后 Codex 路由进入等待状态，下一次带 cookie 的 CLI 调用自动恢复；地址失效期间消息仍保留。相同地址恢复不会重复已成功提交的通知；同一 cookie 不能改绑另一任务。Claude 的管道/token 仍只在服务内存中。
 - **停止通知：** `mailbox disconnect --as NAME_OR_ID` 注销入口，不结束 agent 会话。每次登记默认最多投递 20 条，可通过加入时的 `--max-messages` 调整；达到上限后遇到新信会报告错误，检查讨论再重新加入。
 - **手动参与：** `mailbox topic join TOPIC_ID --as NAME --manual` 只加入主题，不登记或更改通知入口。普通 agent 类型默认手动收信。网页建立身份或加入成员不代表目标会话入口已经登记。
 
@@ -158,18 +159,14 @@ mailbox topic join TOPIC_ID --as claude-mailbox-rogue-tower
 - **同一地址短暂不可达**：Codex App / Claude 原生 IPC 在写出请求前遇到 `ENOENT` 或 `ECONNREFUSED`，
   按 1、2、4、8 秒间隔最多追加四次重试；成功后继续派送。预算耗尽后停在错误状态，消息保留。
   已写出请求后的超时、断开或工具拒绝不自动重试，因为原调用可能已经生效；投递数量上限不由重试绕过。
-- **Codex App 换了地址**：原任务执行一次原身份的 `topic join` 即可。服务验证新入口属于原任务，
-  旧登记已失败，或探测确认旧管道不存在时，允许直接换绑并续投未确认消息，无需先 `disconnect`。
-  仍正常的旧入口、其他任务、尚在进行的投递，以及验证不通过的新地址都不能被覆盖。
-- **边界**：信箱无法自行得知 App 新生成的管道，所以地址改变后仍需原任务提供一次新入口；
-  不扫描本机管道，不借用其他任务上下文。Claude 同地址支持有限重试，换地址仍按原有重新登记流程处理，
-  不凭参与者名字认定是同一原生会话。服务重启后仍需会话重新加入，凭据不持久化。
+- **Codex App 换了地址**：不再逐任务重新加入。任一 Codex 任务运行普通 `mailbox` 命令时，CLI 会像浏览器发送 cookie 一样提交本机 cookie jar 与当前 App 管道；服务验证 cookie 哈希后批量替换地址并续投未确认消息。也可显式执行一次 `mailbox codex app connect`。
+- **边界**：cookie 能授权重新绑定，不能自行发现新地址；因此至少要有一次来自新 App 环境的 CLI 调用。服务不扫描本机管道。Claude 同地址支持有限重试，换地址仍按原有重新登记流程处理；Claude token 不写入 cookie jar。
 - 网页展示当前重试状态；暂停或关闭主题不会向该主题派送，注销身份和停止服务会取消重试定时器。
   正常重复加入不重投已提交消息；故障后重新登记可能续投已递交但尚未确认的消息，接收方仍按消息 ID 去重。
 
-2026-09-13 验证：`npm run check`、`node --test --test-concurrency=1 test/*.test.js`（93 个测试/子用例）通过。
+2026-09-16 验证：`npm run check`、`npm test`（97 个测试/子用例）通过；覆盖 cookie 不出现在 CLI/state/SQLite、Mailbox 与 App 地址同时变化后普通 CLI 自动恢复、批量重连不重复已提交通知、未知结果不自动重放、并发 cookie 写入和注销清理。
 覆盖换绑验证、活入口与其他任务保护、未知结果不重试、重试预算、暂停/注销/停止，以及真实本机 IPC 的发送前后失败分类。
-服务端逻辑在进程启动时加载，更新源码后需重启信箱才生效；重启会清空内存入口，各会话需重新加入。
+服务端逻辑在进程启动时加载，更新源码后需重启信箱才生效。重启会清空实时 App/Claude 地址；Codex 逻辑路由由下一次带 cookie 的普通 CLI 命令批量恢复，Claude 仍需原会话重新加入。
 
 前端的“通知入口已登记”只表示服务掌握投递信息，不代表模型在线或已读。收到通知后，agent 自己用 skill + CLI 先获取讨论目标，再读正文、回信并 ACK。通知包含项目、主题、消息编号以及获取目标和消息的指引，不直接包含讨论目标或对方正文；投递程序不会代发回答或确认。
 

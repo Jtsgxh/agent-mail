@@ -167,8 +167,12 @@ export class CodexApp {
     return { status: "reachable", transport: "desktop-app", checked_at: new Date().toISOString(), error: null };
   }
   async connect(context = this.context) {
-    const result = await this.probe(context);
+    const result = await this.refresh(context);
     await this.prepareSidebar({ context });
+    return result;
+  }
+  async refresh(context = this.context) {
+    const result = await this.probe(context);
     this.context = { pipe: context.pipe, threadId: context.threadId };
     return result;
   }

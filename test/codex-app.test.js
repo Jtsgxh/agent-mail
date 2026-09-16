@@ -7,6 +7,7 @@ import { endianness, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { mkdtemp, rm } from "node:fs/promises";
 import { CodexApp, appRequest, projectTarget } from "../src/codex-app.js";
 import { startServer } from "../src/server.js";
 import { Client } from "../src/client.js";
@@ -30,6 +31,7 @@ async function until(check) {
 }
 
 async function fixture(t, mode = "join") {
+  const cookieDir = await mkdtemp(join(tmpdir(), "mailbox-route-cookies-"));
   const pipe = process.platform === "win32" ? `\\\\.\\pipe\\mailbox-app-test-${randomUUID()}` : join(tmpdir(), `mailbox-app-${randomUUID()}.sock`);
   const caller = randomUUID(), nativeId = randomUUID(), clientId = randomUUID();
   const calls = [], connections = new Set(), jobs = [];
@@ -92,7 +94,12 @@ async function fixture(t, mode = "join") {
     const line = p.arguments.prompt.split("\n").find((line) => line.startsWith("1. 首先"));
     const argv = JSON.parse(line.slice(line.indexOf("[")));
     assert.equal(argv.includes("--endpoint"), false);
-    const env = { ...process.env, CODEX_THREAD_ID: nativeId, CODEX_APP_TOOLS_PIPE_PATH: pipe };
+    const env = {
+      ...process.env,
+      CODEX_THREAD_ID: nativeId,
+      CODEX_APP_TOOLS_PIPE_PATH: pipe,
+      MAILBOX_ROUTE_COOKIE_JAR: join(cookieDir, "cookies.json"),
+    };
     if (mode === "sidebar-fail") {
       await assert.rejects(exec(argv[0], argv.slice(1), { env, windowsHide: true }), /Codex App 未确认/);
       return;
@@ -102,7 +109,11 @@ async function fixture(t, mode = "join") {
     if (mode === "early-join") send(socket, request, result(response));
   };
   fake.listen(pipe); await once(fake, "listening");
-  const env = { CODEX_APP_TOOLS_PIPE_PATH: pipe, CODEX_THREAD_ID: caller };
+  const env = {
+    CODEX_APP_TOOLS_PIPE_PATH: pipe,
+    CODEX_THREAD_ID: caller,
+    MAILBOX_ROUTE_COOKIE_JAR: join(cookieDir, "cookies.json"),
+  };
   const app = await startServer({ port: 0, dbPath: ":memory:", codexAppOptions: { env } });
   client = new Client(app.url);
   topic = await client.request("/api/topics", { title: "App 复用测试", goal: "仅测试连接" });
@@ -111,6 +122,7 @@ async function fixture(t, mode = "join") {
     for (const connection of connections) connection.destroy();
     await new Promise((r) => fake.close(r));
     await Promise.allSettled(jobs);
+    await rm(cookieDir, { recursive: true, force: true });
     if (joinError) throw joinError;
   });
   return { app, client, topic, nativeId, caller, clientId, calls, env, pipe, sections,
@@ -261,7 +273,12 @@ test("an existing desktop task joins an unconfigured server without a session re
   const p = await client.request("/api/participants", { name: "existing-desktop", kind: "codex" });
   await client.request(`/api/topics/${topic.id}/members`, { as: p.id });
   const message = await client.request(`/api/topics/${topic.id}/messages`, { as: "human", to: p.id, body: "pending review", requestId: randomUUID() });
-  const env = { ...process.env, CODEX_THREAD_ID: f.nativeId, CODEX_APP_TOOLS_PIPE_PATH: f.pipe };
+  const env = {
+    ...process.env,
+    CODEX_THREAD_ID: f.nativeId,
+    CODEX_APP_TOOLS_PIPE_PATH: f.pipe,
+    MAILBOX_ROUTE_COOKIE_JAR: f.env.MAILBOX_ROUTE_COOKIE_JAR,
+  };
   const args = [resolve("bin/mailbox.js"), "--url", server.url, "topic", "join", topic.id, "--as", p.id];
   const joined = JSON.parse((await exec(process.execPath, args, { env, windowsHide: true })).stdout);
   assert.equal(joined.notification.status, "ready");

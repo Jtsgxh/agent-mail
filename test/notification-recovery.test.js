@@ -149,6 +149,37 @@ test("ambiguous failures are not automatically retried", async (t) => {
   assert.equal(f.calls.length, 1);
 });
 
+test("route-cookie recovery does not replay a persisted ambiguous App result", async (t) => {
+  const f = fixture(t);
+  f.store.saveNotificationRoute(f.participant.id, {
+    kind: "codex",
+    nativeId: "own-task",
+    cookieHash: "test-cookie-hash",
+    maxMessages: 20,
+  });
+  await f.register();
+  f.failWith(new Error("connection closed after request was sent"));
+  const message = f.post();
+  await until(() => f.route().status === "error");
+  const blocked = f.store.notificationRoute(f.participant.id);
+  assert.equal(blocked.resume_blocked, 1);
+  await f.recipients.resumeCodex([blocked], "new-pipe");
+  await sleep(50);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.delivery(message.id).notified_at, null);
+
+  f.failWith(null);
+  const explicitlyRenewed = f.store.saveNotificationRoute(f.participant.id, {
+    kind: "codex",
+    nativeId: "own-task",
+    cookieHash: "rotated-cookie-hash",
+    maxMessages: 20,
+  });
+  await f.recipients.resumeCodex([explicitlyRenewed], "new-pipe");
+  await until(() => !!f.delivery(message.id).notified_at);
+  assert.equal(f.calls.length, 2);
+});
+
 test("pausing, removing a recipient, and shutting down stop retry delivery", async (t) => {
   for (const action of ["pause", "remove", "close"]) {
     await t.test(action, async (t) => {
