@@ -101,6 +101,8 @@ export class CodexApp {
     // The bundled MCP adapter uses these independent IDs when executor turn IDs are absent.
     const result = await appRequest(context, "tools/call", {
       namespace: "codex_app", tool, arguments: args,
+      // 本入口只接入 Codex 任务，按当前 App 契约显式声明调用来源。
+      callerSource: "codex",
       threadId: context.threadId,
       callId: `mcp-call-${randomUUID()}`, turnId: `mcp-turn-${randomUUID()}`,
     }, options);

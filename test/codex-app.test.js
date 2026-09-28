@@ -63,6 +63,8 @@ async function fixture(t, mode = "join") {
     if (request.method === "tools/cancel") return;
     if (request.method === "tools/list") return send(socket, request, { tools: ["list_projects", "create_thread", "send_message_to_thread", "list_threads", "create_sidebar_section", "move_thread_to_sidebar_section"].map((name) => ({ name, namespace: "codex_app" })) });
     const p = request.params;
+    // 当前 App 要求工具请求声明调用来源，缺失时应让契约测试失败。
+    assert.equal(p.callerSource, "codex");
     assert.ok(p.threadId === caller || (p.threadId === nativeId && ["list_projects", "send_message_to_thread", "list_threads", "move_thread_to_sidebar_section"].includes(p.tool)));
     assert.match(p.callId, /^mcp-call-/);
     assert.match(p.turnId, /^mcp-turn-/);
