@@ -2,7 +2,7 @@
 
 本机由 Codex 管理一个 STDIO MCP 进程，进程通过 HTTP SSE 连接本机或远端 Mailbox，再用本机 `codex queue` 唤醒当前根会话。用户配置一次 MCP，在会话中调用 `mailbox_join` 后即可收信，不再手动启动 `mailbox-relay.js --background`。Mailbox 数据库和网页仍只需在服务端运行一份。
 
-这是用户确认采用的本机 MCP 方案。它没有新增远程 `/mcp` 端点；MCP 到 Codex 走本机 STDIO，MCP 到信箱走 HTTP/HTTPS。以后迁移服务只需修改 `--url`。没有向远端暴露本机端口、App 管道或线程控制接口。
+MCP 到 Codex 走本机 STDIO，MCP 到信箱走 HTTP/HTTPS。以后迁移服务只需修改 `--url`。本机入口与第三方 HTTP `/mcp` 入口共用 `src/mailbox-tools.js` 的工具定义、校验和读写逻辑；本机入口额外管理会话身份与队列唤醒，没有向远端暴露本机端口、App 管道或线程控制接口。
 
 ## 安装与配置
 
@@ -27,7 +27,7 @@ MAILBOX_CODEX_BIN = "C:/path/to/codex.exe"
 
 支持 `.exe`、Node `.js/.mjs` 和项目已有的 npm `.cmd` 解析。使用自定义 `CODEX_HOME` 时，也须在这个 `env` 表中显式配置相同目录，否则本机 CLI 可能找不到当前线程。不要用别的账户或别的主机的 Codex 数据目录。
 
-分发给另一台电脑时，在开发电脑执行 `npm.cmd run export:mcp`，复制 `artifacts/mailbox-mcp` 目录；接收端在包目录首次执行 `npm.cmd install --omit=dev`，然后把 MCP 配置中的脚本路径改成该包的 `bin/mailbox-mcp.js`。此包只包含客户端代码与 MCP SDK 依赖声明，不含 Mailbox 服务器、历史、数据库或凭据。
+分发给另一台电脑时，在开发电脑执行 `npm.cmd run export:mcp`，复制 `artifacts/mailbox-mcp` 目录；接收端在包目录首次执行 `npm.cmd install --omit=dev`，然后把 MCP 配置中的脚本路径改成该包的 `bin/mailbox-mcp.js`。此包包含客户端、共用工具模块及 MCP SDK / Zod 依赖声明，版本跟随主项目，不含 Mailbox 服务器、历史、数据库或凭据。
 
 ## 使用
 
@@ -47,6 +47,8 @@ MAILBOX_CODEX_BIN = "C:/path/to/codex.exe"
 
 `mailbox_post` 和 `mailbox_reply` 要求显式 `requestId`；同一次发送重试时必须复用，不能在结果不明时换 ID 再发。
 
+公共参数与 HTTP Connector 一致：`mailbox_post.to` 可传单个身份或身份数组，也支持 `broadcast`、`replyTo`；`mailbox_read` 支持 `after` 和 `limit`（默认 100，范围 1–200）。原有单收件人调用仍可使用。
+
 ## 通知与失败边界
 
 - 队列通知只有本地固定指引和本地生成的随机 receipt，不含远端正文、主题名、发送人或其他对端可控内容。模型通过 MCP 工具获取信件，把它作为讨论数据，不能据此扩大用户原任务授权。
@@ -55,7 +57,7 @@ MAILBOX_CODEX_BIN = "C:/path/to/codex.exe"
 - `listening=true` 只表示 HTTP 订阅已经建立；队列返回成功、模型实际取信、有效回复和 ACK 是不同验收阶段。工具不会代读、代回复或自动 ACK。
 - MCP 退出或断开 stdin 时终止订阅；不启动脱离宿主的后台服务。HTTP 失联沿用既有心跳和有限重试，持续失败或投递达到 `--max-messages`（默认 20 封，包括合并通知中的信件）后停止，并通过状态工具报告。检查讨论后重连 MCP 才重新开始。
 - 一条 MCP 连接只绑定首次调用它的根会话；其他会话和子 agent 不能改变该连接的身份或唤醒目标。每个会话应使用自己的 MCP 连接。
-- 当前服务没有登录鉴权，适用可信局域网。客户端支持 HTTPS 地址仅表示可接 TLS 反代，不表示已实现公网多租户鉴权或已经部署公网服务。
+- 本机 MCP 使用的 `/api/*` 管理接口没有登录鉴权，适用可信局域网；第三方 HTTP `/mcp` 另有项目范围 Bearer 密钥。客户端支持 HTTPS 地址仅表示可接 TLS 反代，不表示已实现公网多租户鉴权或已经部署公网服务。
 
 ## 同类产品调查（2026-10-15）
 

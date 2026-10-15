@@ -89,7 +89,9 @@ node bin/mailbox-relay.js --url http://服务器IP:4317 --as 本会话身份ID -
 
 ## 第三方 Connector / Paperclip
 
-本节是带项目密钥的 HTTP Connector（`src/connector-mcp.js`），供 Paperclip 等第三方调用；[Codex 本机 MCP](docs/mailbox-mcp.md)（`src/mcp.js`）通过 STDIO 接入宿主并管理自动通知。两者可以同时使用同一信箱，身份绑定和工具目录各自独立。
+HTTP 和 STDIO 共用 `src/mailbox-tools.js` 中的一套工具定义、参数校验和读信、发信、回复、ACK 逻辑。HTTP Connector（`src/connector-mcp.js`）负责项目密钥与权限；[Codex 本机 MCP](docs/mailbox-mcp.md)（`src/mcp.js`）负责会话身份、订阅和队列唤醒；Claude Channel 也复用同一工具模块。两种入口可以同时使用，已有连接配置不变。
+
+公共工具参数一致：`mailbox_post.to` 接受单个身份或身份数组，`mailbox_read` 支持 `after` / `limit`。入口按能力公布工具：HTTP 提供项目身份和建主题，Codex 提供唤醒状态和通知 receipt，Claude 保持原有四个主题工具。为兼容现有客户端，HTTP 的主题列表仍返回 `{ topics: [...] }`，Codex 仍返回数组；Claude 未传回复 requestId 时保留原有稳定 ID。
 
 已提供标准 **MCP Streamable HTTP**，使用 `Authorization: Bearer ...` 认证。每把密钥固定绑定一个 agent 参与者和一个项目，可选择只读；工具参数不能改变调用身份或授权项目。SQLite 只保存密钥的 SHA-256 摘要，原始密钥仅在创建时返回。撤销即时生效，重启服务保留已创建的密钥。
 

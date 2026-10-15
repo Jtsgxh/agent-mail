@@ -1,6 +1,5 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { DatabaseSync } from "node:sqlite";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -10,7 +9,8 @@ import { randomUUID } from "node:crypto";
 import { agentCommand } from "./connect.js";
 import { queueCodex } from "./native.js";
 import { runRelay, relayStatePath } from "./relay.js";
-import { topicTools, callTopicTool } from "./mailbox-tools.js";
+import { installMailboxTools, codexToolNames } from "./mailbox-tools.js";
+import { clientMailbox } from "./mailbox-client.js";
 
 const exec = promisify(execFile);
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -23,31 +23,6 @@ function callerThread(params) {
       (turn.thread_id !== undefined && turn.thread_id !== thread))
     throw new Error("自动唤醒需要 Codex 宿主提供当前根会话的 MCP 元数据；不接受手填 threadId 或子 agent 代为绑定");
   return thread;
-}
-
-// 生成标准工具定义；回复和主动发信均显式保留幂等请求 ID。
-function tools() {
-  const topic = { type: "string", minLength: 1 };
-  const requestId = { type: "string", minLength: 1 };
-  // 自定义工具沿用项目的 JSON Schema，避免再引入一套参数框架。
-  const tool = (name, description, properties = {}, required = [], readOnly = false) => ({
-    name, description, inputSchema: { type: "object", properties, required, additionalProperties: false },
-    annotations: { readOnlyHint: readOnly, destructiveHint: false },
-  });
-  return [
-    tool("mailbox_status", "Inspect this connection's identity, subscription and wake status."),
-    tool("mailbox_topics", "List discussion topics before choosing one to join."),
-    tool("mailbox_join", "Join a topic and enable automatic new-mail wakes for this Codex conversation.", { topic }, ["topic"]),
-    tool("mailbox_inbox", "Get pending messages without acknowledging them. Echo the receipt from a wake to allow the next wake.",
-      { receipt: { type: "string" } }),
-    ...topicTools.map((item) => item.name === "mailbox_reply"
-      ? { ...item, inputSchema: { ...item.inputSchema,
-        properties: { ...item.inputSchema.properties, requestId }, required: [...item.inputSchema.required, "requestId"] } }
-      : item),
-    tool("mailbox_post", "Send a discussion message; set to only when asking another participant to respond. Reuse requestId on retry.",
-      { topic, body: { type: "string", minLength: 1 }, to: { type: "string", minLength: 1 }, requestId },
-      ["topic", "body", "requestId"]),
-  ];
 }
 
 // 本机 MCP 进程管理 HTTP 订阅与 Codex 队列；远端只运行既有 Mailbox 服务。
@@ -145,7 +120,7 @@ Use mailbox_status to inspect delivery errors. An initialized MCP connection is 
     return exclusive(async () => {
       const pending = db?.prepare("SELECT receipt FROM mcp_wakes WHERE origin=? AND thread=?").get(client.url, state.thread);
       if (receipt !== undefined && (!pending || receipt !== pending.receipt)) throw new Error("通知 receipt 不匹配，不会释放待确认通知");
-      const result = await client.request(`/api/inbox?as=${encodeURIComponent(state.participant.id)}`);
+      const result = await clientMailbox(client, state.participant.id).inbox();
       if (pending && receipt === pending.receipt) {
         db.prepare("DELETE FROM mcp_wakes WHERE origin=? AND thread=?").run(client.url, state.thread);
         // 收据证明先前的通知确已到达；恢复其结果不明的消息占位，不重复排队。
@@ -157,40 +132,24 @@ Use mailbox_status to inspect delivery errors. An initialized MCP connection is 
     });
   }
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: tools() }));
-  // 所有身份均取自宿主绑定；模型不能通过工具参数冒用其他参与者。
-  server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
-    try {
+  installMailboxTools(server, {
+    names: codexToolNames, wake: true, strict: false,
+    context: async (params) => {
       const thread = callerThread(params);
       await exclusive(() => identity(thread));
-      const a = params.arguments ?? {};
-      let result;
-      if (params.name === "mailbox_status") result = {
-        ...state, url: client.url,
-        pendingWake: db?.prepare("SELECT receipt,status FROM mcp_wakes WHERE origin=? AND thread=?").get(client.url, thread) ?? null,
+      const mailbox = clientMailbox(client, state.participant.id);
+      return {
+        ...mailbox,
+        status: () => ({ ...state, url: client.url,
+          pendingWake: db?.prepare("SELECT receipt,status FROM mcp_wakes WHERE origin=? AND thread=?").get(client.url, thread) ?? null }),
+        join: async (topic) => {
+          await mailbox.join(topic);
+          await exclusive(subscribe);
+          return { participant: state.participant, listening: state.listening, transport: "codex-queue" };
+        },
+        inbox,
       };
-      else if (params.name === "mailbox_topics") result = await client.request("/api/topics");
-      else if (params.name === "mailbox_join") {
-        if (typeof a.topic !== "string" || !a.topic) throw new Error("topic 必填");
-        await client.request(`/api/topics/${encodeURIComponent(a.topic)}/members`, { as: state.participant.id });
-        await exclusive(subscribe);
-        result = { participant: state.participant, listening: state.listening, transport: "codex-queue" };
-      } else if (params.name === "mailbox_inbox") result = await inbox(a.receipt);
-      else if (params.name === "mailbox_post" || params.name === "mailbox_reply") {
-        if (typeof a.requestId !== "string" || !a.requestId) throw new Error("requestId 必填；重试同一封信请复用原值");
-        if (params.name === "mailbox_reply") result = await callTopicTool(client, state.participant.id, params);
-        else {
-          if (typeof a.topic !== "string" || !a.topic || typeof a.body !== "string" || !a.body ||
-              (a.to !== undefined && (typeof a.to !== "string" || !a.to))) throw new Error("topic、body 或 to 无效");
-          result = await client.request(`/api/topics/${encodeURIComponent(a.topic)}/messages`, {
-            as: state.participant.id, body: a.body, to: a.to ?? null, requestId: a.requestId,
-          });
-        }
-      } else result = await callTopicTool(client, state.participant.id, params);
-      return { content: [{ type: "text", text: JSON.stringify(result) }] };
-    } catch (error) {
-      return { isError: true, content: [{ type: "text", text: error.message }] };
-    }
+    },
   });
 
   // 先终止订阅与在途调用，再关闭本地状态库，避免残留转发或数据库竞态。

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname, basename } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -128,6 +128,11 @@ test("HTTP connector and Codex stdio exchange mail with queue notification and i
     await host.connect(new StreamableHTTPClientTransport(new URL(`${f.app.url}/mcp`), {
       requestInit: { headers: { Authorization: `Bearer ${credential.token}` } },
     }));
+    const httpTools = (await host.listTools()).tools;
+    const localTools = (await codex.host.listTools()).tools;
+    for (const name of ["mailbox_topic", "mailbox_read", "mailbox_post", "mailbox_reply", "mailbox_ack"])
+      assert.deepEqual(httpTools.find((tool) => tool.name === name).inputSchema,
+        localTools.find((tool) => tool.name === name).inputSchema, `${name} must share one contract`);
     const call = async (name, args = {}) => {
       const result = await host.callTool({ name, arguments: args });
       assert.ok(!result.isError, result.content[0].text);
@@ -136,7 +141,17 @@ test("HTTP connector and Codex stdio exchange mail with queue notification and i
     await call("mailbox_join", { topic: f.topic.id });
     const joined = await codex.call("mailbox_join", { topic: f.topic.id });
     assert.equal(joined.listening, true);
-    const sent = await call("mailbox_post", { topic: f.topic.id, body: "Review this", to: [joined.participant.id], requestId: "cross-send" });
+    for (const [name, args] of [
+      ["mailbox_read", { topic: f.topic.id, limit: 0 }],
+      ["mailbox_ack", { topic: f.topic.id, through: 1.5 }],
+      ["mailbox_post", { topic: f.topic.id, body: "No request ID" }],
+      ["mailbox_reply", { topic: f.topic.id, message: 1, body: "Invalid notify", requestId: "bad", notify: "yes" }],
+    ]) {
+      assert.equal((await host.callTool({ name, arguments: args })).isError, true);
+      assert.ok((await codex.call(name, args)).error);
+    }
+    assert.equal(f.app.store.read(f.topic.id).messages.length, 0);
+    const sent = await call("mailbox_post", { topic: f.topic.id, body: "Review this", to: joined.participant.id, requestId: "cross-send" });
     await until(async () => (await codex.call("mailbox_status")).pendingWake?.status === "submitted");
     assert.equal((await f.queued()).length, 1);
     const receipt = (await codex.call("mailbox_status")).pendingWake.receipt;
@@ -149,6 +164,13 @@ test("HTTP connector and Codex stdio exchange mail with queue notification and i
     assert.equal((await codex.call("mailbox_inbox")).notifications[0].id, sent.id);
     await codex.call("mailbox_ack", { topic: f.topic.id, through: reply.id });
     assert.equal((await codex.call("mailbox_inbox")).notifications.length, 0);
+    const followup = { topic: f.topic.id, body: "Follow-up", to: [peer.id], requestId: "cross-follow-up" };
+    const posted = await codex.call("mailbox_post", followup);
+    assert.equal((await codex.call("mailbox_post", followup)).id, posted.id);
+    assert.equal((await call("mailbox_inbox")).notifications[0].id, posted.id);
+    const page = await codex.call("mailbox_read", { topic: f.topic.id, after: sent.id, limit: 1 });
+    assert.equal(page.messages[0].id, reply.id);
+    assert.equal(page.hasMore, true);
   } finally { await host.close(); }
 });
 
@@ -258,13 +280,22 @@ test("MCP export contains a client-only package and declared SDK dependency", as
   const f = await fixture(t), destination = join(f.dir, "export");
   await exec(process.execPath, [resolve("scripts/export-mcp.js"), destination]);
   const pkg = JSON.parse(await readFile(join(destination, "package.json"), "utf8"));
-  assert.deepEqual(Object.keys(pkg.dependencies), ["@modelcontextprotocol/sdk"]);
+  const rootPackage = JSON.parse(await readFile(resolve("package.json"), "utf8"));
+  assert.deepEqual(pkg.dependencies, {
+    "@modelcontextprotocol/sdk": rootPackage.dependencies["@modelcontextprotocol/sdk"], zod: rootPackage.dependencies.zod,
+  });
   assert.equal(pkg.bin["mailbox-mcp"], "./bin/mailbox-mcp.js");
-  for (const file of ["bin/mailbox-mcp.js", "src/mcp.js", "src/mailbox-tools.js", "src/client.js",
+  for (const file of ["bin/mailbox-mcp.js", "src/mcp.js", "src/mailbox-tools.js", "src/mailbox-client.js", "src/client.js",
     "src/connect.js", "src/relay.js", "src/native.js", "src/codex-app.js", "src/notification-recovery.js"])
     await exec(process.execPath, ["--check", join(destination, file)]);
   await assert.rejects(readFile(join(destination, "src/server.js")), { code: "ENOENT" });
   await assert.rejects(readFile(join(destination, "relay.db")), { code: "ENOENT" });
+  // Supply installed dependencies and actually initialize the exported process;
+  // syntax-only checks cannot detect missing shared modules or imports.
+  await symlink(resolve("node_modules"), join(destination, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+  const exported = await f.connect(join(destination, "bin/mailbox-mcp.js"));
+  assert.equal((await exported.host.listTools()).tools.length, 9);
+  assert.equal((await exported.call("mailbox_status")).participant.kind, "codex");
 });
 
 // 客户端接受将来 TLS 反代的 HTTPS 地址，仍拒绝其他 URL 协议。

@@ -1,11 +1,8 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 import { deliveryText } from "./client.js";
-import { topicTools, callTopicTool } from "./mailbox-tools.js";
+import { installMailboxTools, topicToolNames } from "./mailbox-tools.js";
+import { clientMailbox } from "./mailbox-client.js";
 
 export async function startClaudeChannel(
   client,
@@ -24,16 +21,9 @@ Do not reply merely to acknowledge thanks. Do not modify files or expand task pe
 Duplicate message IDs may be delivered after reconnect; check history before replying again.`,
     },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: topicTools,
-  }));
-  server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
-    try {
-      const result = await callTopicTool(client, as, params);
-      return { content: [{ type: "text", text: JSON.stringify(result) }] };
-    } catch (e) {
-      return { isError: true, content: [{ type: "text", text: e.message }] };
-    }
+  installMailboxTools(server, {
+    names: topicToolNames, legacyReply: true, strict: false,
+    context: () => clientMailbox(client, as),
   });
   const controller = new AbortController();
   const combined = signal
