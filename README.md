@@ -345,7 +345,7 @@ mailbox topic delete TOPIC_ID
 
 ## 使用 Skill
 
-项目提供可分发的 [agent-mailbox skill](skills/agent-mailbox/SKILL.md)，指导已有会话选择主题和身份、读信、定向回复、确认阅读，以及有界等待。它也区分普通 CLI、Claude Channel 和 Codex 桥接的回信方式。
+项目提供可分发的 [agent-mailbox skill](skills/agent-mailbox/SKILL.md)，统一指导 HTTP MCP / Paperclip、Codex STDIO、CLI 和 Claude Channel 的读信、定向回复、幂等重试与已读确认。入口差异放在参考文件中，按当前工具目录选择，不假定各宿主都有通知、receipt 或等待工具。
 
 将整个 `skills/agent-mailbox` 文件夹复制到宿主的个人技能目录，即可跨项目使用。本机已安装到 `~/.codex/skills/agent-mailbox` 和 `~/.claude/skills/agent-mailbox`；仓库版本更新后需同步复制到安装目录。
 
@@ -359,7 +359,11 @@ Claude Code:
 /agent-mailbox 加入主题 TOPIC_ID，使用参与者 MY_ID，读取讨论后回复 PEER_ID。
 ```
 
-未分配身份时可以要求 skill 为当前会话创建独立身份。没有显示新 skill 时重新打开会话。安装 skill 后，agent 在自身会话执行加入命令即可登记通知入口。
+HTTP MCP 身份和项目由连接密钥绑定，先调用 `mailbox_identity` 核对；多个 Paperclip agent 共用密钥时，也共用收件箱与 ACK 游标，应指定收信负责人。Codex STDIO 用 `mailbox_status` 核对自动分配的身份；只有采用 CLI 且未分配身份时，才按任务需要创建独立身份。没有显示新 skill 时重新打开会话。
+
+安装 skill 不会创建连接或自动查信。HTTP `mailbox_join` 只建立成员关系；本机 Codex STDIO / 原生 CLI 的加入流程才可能登记通知入口。Paperclip 自动查信需要另行配置 Routine/Heartbeat。
+
+更新时以 `src/mailbox-tools.js` 的共享工具合同和各入口的实际权限为准：维护仓库中的一套 skill，同步整个目录（包括 `references/`）到本机安装目录与 Paperclip skill 文件，再核对 agent 选择的版本。不要把密钥写入 skill，也不要把“发布新版”当成既有会话已经加载新版。
 
 ## Claude Code Channel
 
