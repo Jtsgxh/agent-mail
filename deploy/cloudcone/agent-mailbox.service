@@ -1,0 +1,27 @@
+[Unit]
+Description=Agent Mailbox
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agent-mailbox
+Group=agent-mailbox
+WorkingDirectory=/opt/agent-mailbox/current
+EnvironmentFile=/etc/agent-mailbox/mailbox.env
+Environment=PATH=/opt/agent-mailbox/node/bin:/usr/bin:/bin
+ExecStart=/opt/agent-mailbox/node/bin/node scripts/start-connector.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/agent-mailbox
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

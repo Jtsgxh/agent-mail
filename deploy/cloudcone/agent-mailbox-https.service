@@ -1,0 +1,28 @@
+[Unit]
+Description=Agent Mailbox HTTPS (80 and 8443 only)
+After=network-online.target agent-mailbox.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agent-mailbox-https
+Group=agent-mailbox-https
+Environment=HOME=/var/lib/agent-mailbox-https
+Environment=XDG_DATA_HOME=/var/lib/agent-mailbox-https
+Environment=XDG_CONFIG_HOME=/var/lib/agent-mailbox-https
+ExecStart=/opt/agent-mailbox/bin/caddy run --config /etc/agent-mailbox/Caddyfile --adapter caddyfile
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/agent-mailbox-https
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

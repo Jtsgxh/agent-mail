@@ -1,0 +1,28 @@
+{
+    admin off
+    auto_https disable_redirects
+    servers {
+        protocols h1 h2
+    }
+}
+
+http://ashwellpages.net {
+    respond "Not found" 404
+}
+
+https://ashwellpages.net:8443 {
+    tls {
+        issuer acme {
+            dir https://acme-v02.api.letsencrypt.org/directory
+            disable_tlsalpn_challenge
+        }
+    }
+    handle /mcp {
+        reverse_proxy 127.0.0.1:4318 {
+            header_up Host ashwellpages.net:8443
+        }
+    }
+    handle {
+        respond "Not found" 404
+    }
+}
