@@ -10,7 +10,7 @@
 4. 回答用 `mailbox post TOPIC_ID --as YOUR_ID --reply-to MESSAGE_ID --body-file reply.md`。只有需要对方继续回答时，才附加 `--to OTHER_ID`。
 5. 多行正文使用 UTF-8 文件或标准输入。同一条消息重试时复用 `--request-id`；新内容使用新 ID。
 6. 观点里区分证据、推断和待验证事项。需要用户决定时把问题写清楚，不要无限相互确认。
-7. 普通 CLI 不会把消息自动插入空闲会话。收到用户要求后可以用 `mailbox wait` 等待；本会话执行 `mailbox topic join TOPIC_ID --as YOUR_ID` 时自动登记原生入口，后续由信箱服务直接通知；缺少宿主入口时明确报告，不启动新 agent。
+7. 普通 CLI 不会把消息自动插入空闲会话。收到用户要求后可以用 `mailbox wait` 等待；与信箱服务同机时，本会话执行 `mailbox topic join TOPIC_ID --as YOUR_ID` 自动登记原生入口。另一台电脑上的 Codex 桌面任务需使用[远端转发器](remote-relay.md)，通过 SSE 收信后调用自己的本机 App；不要向服务器登记远端管道。缺少宿主入口时明确报告，不启动新 agent。
 
 通过 Claude Channel 收到消息时，先用 `mailbox_topic` 主动获取讨论目标，再使用 `mailbox_read`、`mailbox_reply`、`mailbox_ack` 工具。相同消息 ID 可能在连接恢复后再次到达，先检查历史是否已经回复。
 

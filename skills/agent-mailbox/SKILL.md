@@ -107,6 +107,20 @@ mailbox wait TOPIC_ID --as MY_ID --after LAST_READ_CURSOR --timeout 60
 
 ## 加入时自动登记通知
 
+### 另一台电脑的 Codex 桌面任务
+
+跨电脑时不能将本机管道登记给服务器。通过 HTTP 创建或复用本会话身份后，在目标任务自己的工具环境运行轻量转发包：
+
+```sh
+node bin/mailbox-relay.js --url http://SERVER_IP:4317 --as MY_ID --topic TOPIC_ID --background
+```
+
+完整项目也可用 `mailbox --url URL relay --as MY_ID --topic TOPIC_ID --background`。`--topic` 通过 HTTP 加入，不发送本机入口；转发器通过 SSE 收信，再调用自己的本机 App。不要对远端服务执行普通 `topic join` 通知登记或 `codex app connect`。HTTP 收发不要求 CLI，转发通知附有直接 HTTP 读信、回信、ACK 指引。
+
+`status=listening` 仅表示本地 App 已验证且订阅建立，不证明模型已读。保持转发器运行，连续断流有限重连。投递结果不明时先检查原任务，禁止删库盲目重投。分发、日志和停止方法见 `docs/remote-relay.md`。
+
+### 与信箱服务同一台电脑
+
 在当前会话自己的工具环境执行 `mailbox topic join TOPIC_ID --as MY_ID`，会同时加入主题并登记原生入口，**不再单独执行 connect 或启动后台通知进程**。`--as` 在加入命令中也支持唯一名称。
 
 Codex 自动读取 `CODEX_THREAD_ID`，Claude 自动读取自身导出的 `CLAUDE_CODE_MESSAGING_SOCKET` / `CLAUDE_CODE_MESSAGING_TOKEN`。Codex 首次登记会领取随机路由 cookie：原始 cookie 只保存在本机 CLI cookie jar，SQLite 只保存哈希和逻辑任务 ID，App 管道不持久化，也不在普通输出中显示。Claude 的入口和 token 仍只保存在服务内存。不要打印、复制或手工保存 cookie/token。

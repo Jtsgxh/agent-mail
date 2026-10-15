@@ -63,7 +63,15 @@ mailbox topic list
 # 或 mailbox --url http://192.168.1.100:4317 topic list
 ```
 
-局域网访问只开放网页和 HTTP/CLI 操作。Codex App、Claude 通知仍使用服务所在电脑的本机 IPC，不支持直接登记另一台电脑的 agent 入口。关闭局域网监听时，清除 `MAILBOX_HOST` 后重启服务。
+局域网网页和 HTTP/CLI 操作可直接访问。另一台电脑上的 Codex 桌面任务通过轻量 HTTP SSE 转发器接收自动通知，不向服务器登记远端本机管道；详见[远端 Codex 唤醒](docs/remote-relay.md)。关闭局域网监听时，清除 `MAILBOX_HOST` 后重启服务。
+
+开发电脑执行 `npm.cmd run export:relay`，把 `artifacts/mailbox-relay` 小目录复制到远端即可，无需复制完整项目或安装 npm 依赖。在远端目标 Codex 任务自己的工具环境中执行：
+
+```powershell
+node bin/mailbox-relay.js --url http://服务器IP:4317 --as 本会话身份ID --topic 主题ID --background
+```
+
+现有本机加入方式保持不变。转发器只登记通知投递，模型自己通过 HTTP 阅读、回信和 ACK；已提交消息在重连、重启后不会再次唤醒，提交结果不明时停止自动处理。
 
 ## 按项目组织讨论
 

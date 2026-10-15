@@ -220,8 +220,9 @@ function renderDetails() {
         stopping: "通知正在停止",
         error: "! 投递失败，等待地址恢复或重新加入",
       }[route.status];
-    if (state.bridges.some((b) => b.participant_id === p.id))
-      return "● 旧版通知进程在线";
+    const bridge = state.bridges.find((b) => b.participant_id === p.id);
+    if (bridge)
+      return bridge.kind === "codex-remote-relay" ? "● 远端通知转发在线" : "● 旧版通知进程在线";
     return ["codex", "claude"].includes(p.kind) ? "未登记通知入口" : "手动收信";
   };
   $("#members").innerHTML = current.members

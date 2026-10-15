@@ -21,18 +21,35 @@ export class Client {
     }
     return result;
   }
-  async *events(path, signal) {
-    const res = await fetch(this.url + path, { signal });
-    if (!res.ok) throw new Error(`${res.status}: ${(await res.json()).error}`);
-    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  // 可选超时供远端转发检测失联；普通订阅保持原有行为。
+  async *events(path, signal, { connectTimeout = 0, idleTimeout = 0 } = {}) {
+    const timeout = new AbortController();
+    let timer, reader;
+    // 收到响应或心跳后续期，避免半开连接永久阻塞自动重连。
+    const renew = (ms) => {
+      clearTimeout(timer);
+      if (ms) timer = setTimeout(() => timeout.abort(new Error("信箱事件连接超时")), ms);
+    };
     let buffer = "";
     try {
+      renew(connectTimeout);
+      const res = await fetch(this.url + path, {
+        signal: AbortSignal.any([timeout.signal, ...(signal ? [signal] : [])]),
+      });
+      if (!res.ok) {
+        const error = new Error(`${res.status}: ${(await res.json()).error}`);
+        error.status = res.status;
+        throw error;
+      }
+      renew(idleTimeout);
+      reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
       while (true) {
         const { value, done } = await reader.read();
         if (done)
           throw new Error(
             "信箱事件连接已关闭，请重启桥接；未确认消息会重新投递",
           );
+        renew(idleTimeout);
         buffer += value.replaceAll("\r\n", "\n");
         let end;
         while ((end = buffer.indexOf("\n\n")) >= 0) {
@@ -51,7 +68,8 @@ export class Client {
         }
       }
     } finally {
-      await reader.cancel().catch(() => {});
+      clearTimeout(timer);
+      await reader?.cancel().catch(() => {});
     }
   }
 }

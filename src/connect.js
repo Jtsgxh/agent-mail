@@ -94,6 +94,7 @@ export async function choose(label, choices, signal) {
   }
 }
 
+// 普通连接沿用本机投递；远端转发复用后台启动流程，在客户端自己访问 App。
 export async function connectMailbox(client, options = {}, select = choose) {
   const {
     as,
@@ -126,6 +127,11 @@ export async function connectMailbox(client, options = {}, select = choose) {
         candidates.map((p) => ({ label: `${p.name} (${p.kind})`, value: p })),
         signal,
       );
+  if (options.relay && (participant.kind !== "codex" ||
+      !process.env.CODEX_APP_TOOLS_PIPE_PATH || !process.env.CODEX_THREAD_ID))
+    throw new Error("请在目标 Codex 桌面 App 会话内启动远端转发器");
+  if (options.relay && (options.thread || endpoint || options.socket || options.agentBin))
+    throw new Error("远端转发器只使用当前桌面任务自身的入口，不接受替换任务或宿主参数");
   const thread =
     options.thread ??
     (participant.kind === "codex" ? process.env.CODEX_THREAD_ID : undefined);
@@ -133,7 +139,7 @@ export async function connectMailbox(client, options = {}, select = choose) {
   const token = process.env.CLAUDE_CODE_MESSAGING_TOKEN;
   const plan = {
     participant,
-    mode: `${participant.kind}-native`,
+    mode: options.relay ? "codex-remote-relay" : `${participant.kind}-native`,
     thread: thread ?? null,
     endpoint: endpoint ?? null,
     hasClaudeAddress: !!socket,
@@ -157,28 +163,29 @@ export async function connectMailbox(client, options = {}, select = choose) {
   }
   if (background) {
     signal?.throwIfAborted();
-    const logDir = fileURLToPath(
-      new URL("../.mailbox/connections/", import.meta.url),
-    );
+    const logDir = options.relay
+      ? dirname((await import("./relay.js")).relayStatePath())
+      : fileURLToPath(new URL("../.mailbox/connections/", import.meta.url));
     await mkdir(logDir, { recursive: true });
-    const logPath = resolve(logDir, `${participant.id}.log`);
+    // 参与者 ID 来自 HTTP；编码后作为文件名，不能让远端输入形成路径穿越。
+    const logPath = resolve(logDir, `${encodeURIComponent(participant.id)}.log`);
     const logFile = await open(logPath, "a");
     const args = [
       "--url",
       client.url,
-      "connect",
-      participant.kind,
+      ...(options.relay ? [] : ["connect", participant.kind]),
       "--as",
       participant.id,
       "--max-messages",
       String(maxMessages),
     ];
-    if (thread) args.push("--thread", thread);
+    if (thread && !options.relay) args.push("--thread", thread);
+    if (options.topic) args.push("--topic", options.topic);
     if (endpoint) args.push("--endpoint", endpoint);
     if (options.socket) args.push("--socket", options.socket);
     if (options.agentBin) args.push("--agent-bin", options.agentBin);
     const child = fork(
-      fileURLToPath(new URL("../bin/mailbox.js", import.meta.url)),
+      fileURLToPath(new URL(options.relay ? "../bin/mailbox-relay.js" : "../bin/mailbox.js", import.meta.url)),
       args,
       {
         detached: true,
@@ -222,6 +229,22 @@ export async function connectMailbox(client, options = {}, select = choose) {
         if (message.type === "ready") finish();
         if (message.type === "error") finish(new Error(message.error));
       });
+    });
+  }
+  // 远端只通过 HTTP 订阅消息，不把本机 App 管道登记到远端服务。
+  if (options.relay) {
+    const { runRelay } = await import("./relay.js");
+    return runRelay(client, participant, {
+      signal, maxMessages, topic: options.topic,
+      // 只有本地 App 验证与 HTTP 订阅均成功，父进程才报告已接入。
+      onReady() {
+        if (process.connected && process.send) process.send({ type: "ready" });
+        console.error(`${participant.name}：远端通知转发已连接。`);
+      },
+      // 重试日志不包含本机管道、cookie 或 token。
+      onRetry({ delay, message }) {
+        console.error(`${message ? `消息 #${message}` : "HTTP 订阅"} 将在 ${delay}ms 后重试`);
+      },
     });
   }
   const program =

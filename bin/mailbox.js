@@ -18,6 +18,7 @@ mailbox connect claude --as NAME --background
 mailbox connect codex --as NAME --list
 mailbox connect claude --as NAME --preview
 mailbox disconnect --as NAME
+mailbox relay --as ID_OR_NAME [--topic TOPIC_ID] [--background] [--max-messages 20]
 
 mailbox project create --name NAME
 mailbox project list
@@ -114,7 +115,7 @@ try {
   }
   const client = new Client(v.url);
   const isAppCommand = p[0] === "codex" && p[1] === "app";
-  if (!isAppCommand &&
+  if (!isAppCommand && p[0] !== "relay" &&
       process.env.CODEX_APP_TOOLS_PIPE_PATH && process.env.CODEX_THREAD_ID) {
     const routeCookies = await routeCookiesFor(client.url);
     if (routeCookies.length) {
@@ -199,11 +200,13 @@ try {
             maxMessages: int("max-messages", 20),
             signal: controller.signal,
           });
-  } else if (p[0] === "connect") {
+  } else if (p[0] === "connect" || p[0] === "relay") {
     const { connectMailbox } = await import("../src/connect.js");
     const maxMessages = int("max-messages", 20);
     if (maxMessages < 1) throw new Error("消息上限必须大于 0");
     result = await connectMailbox(client, {
+      relay: p[0] === "relay",
+      topic: v.topic,
       kind: p[1],
       as: v.as,
       thread: v.thread,
