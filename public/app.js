@@ -70,6 +70,36 @@ function guard(fn) {
     }
   };
 }
+// 优先使用剪贴板接口；局域网 HTTP 或权限受限时退回选中文本复制。
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // 浏览器拒绝剪贴板权限时，继续尝试点击事件内的兼容复制。
+    }
+  }
+  const previousFocus = document.activeElement;
+  const input = document.createElement("textarea");
+  input.value = text;
+  input.readOnly = true;
+  input.style.position = "fixed";
+  input.style.top = "0";
+  input.style.left = "0";
+  input.style.opacity = "0";
+  document.body.append(input);
+  try {
+    input.focus({ preventScroll: true });
+    input.select();
+    if (!document.execCommand("copy")) throw new Error("copy rejected");
+  } catch {
+    throw new Error(`复制失败，请手动复制主题 ID：${text}`);
+  } finally {
+    input.remove();
+    previousFocus?.focus({ preventScroll: true });
+  }
+}
 async function checkCodexService(start = false) {
   if (checkingCodex) return;
   checkingCodex = true;
@@ -642,7 +672,7 @@ $("#load-more").onclick = guard(async () => {
   renderMessages();
 });
 $("#copy-topic").onclick = guard(async () => {
-  await navigator.clipboard.writeText(selected);
+  await copyText(selected);
   toast("已复制主题 ID");
 });
 $("#ack-visible").onclick = guard(async () => {
