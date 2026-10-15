@@ -7,14 +7,16 @@
     "node": ">=24.0.0"
   },
   "bin": {
-    "mailbox": "./bin/mailbox.js"
+    "mailbox": "./bin/mailbox.js",
+    "mailbox-mcp": "./bin/mailbox-mcp.js"
   },
   "scripts": {
     "start": "node src/server.js",
     "cli": "node bin/mailbox.js",
     "export:relay": "node scripts/export-relay.js",
+    "export:mcp": "node scripts/export-mcp.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/server.js && node --check src/store.js && node --check bin/mailbox.js && node --check src/codex.js && node --check src/claude.js && node --check src/connect.js && node --check public/app.js && node --check src/native.js && node --check src/notifications.js && node --check src/sessions.js && node --check scripts/start-codex.js && node --check scripts/smoke-sessions.js && node --check src/codex-app.js && node --check src/desktop-sessions.js && node --check src/notification-recovery.js && node --check src/route-cookies.js && node --check src/client.js && node --check src/relay.js && node --check bin/mailbox-relay.js && node --check scripts/export-relay.js"
+    "check": "node --check src/server.js && node --check src/store.js && node --check bin/mailbox.js && node --check src/codex.js && node --check src/claude.js && node --check src/connect.js && node --check public/app.js && node --check src/native.js && node --check src/notifications.js && node --check src/sessions.js && node --check scripts/start-codex.js && node --check scripts/smoke-sessions.js && node --check src/codex-app.js && node --check src/desktop-sessions.js && node --check src/notification-recovery.js && node --check src/route-cookies.js && node --check src/client.js && node --check src/relay.js && node --check bin/mailbox-relay.js && node --check scripts/export-relay.js && node --check src/mcp.js && node --check src/mailbox-tools.js && node --check bin/mailbox-mcp.js && node --check scripts/export-mcp.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

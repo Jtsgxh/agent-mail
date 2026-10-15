@@ -143,6 +143,12 @@ Claude 原生入口的测试使用真实本机命名管道和模拟接收端，�
 - 任意 Codex 桌面或 CLI 会话都能被 queue 路由到。已验证独立测试 App Server，以及旧版投递到当前桌面会话；实际路由仍取决于目标宿主，必要时明确提供 --endpoint。
 - 多用户认证隔离、自动启动 agent、自动恢复已退出的 agent 进程，不属于本版本功能。跨电脑 Codex 通知的验证边界见下面的远端转发记录。
 
+## Codex MCP 封装（2026-10-15）
+
+- 新增本机 STDIO MCP 入口及独立客户端导出包，远端复用既有 HTTP 服务；宿主 tools/call 元数据绑定根会话，首次加入后自动订阅，复用本机 `codex queue`，不要求手动启动 relay。
+- 新增 7 项测试，使用真实 SDK/STDIO 子进程和真实 HTTP，覆盖收发读信、实际范围 ACK、身份隔离、通知合并及收据、重启去重、队列结果不明、取信与到信并发、分发包及 HTTPS 地址。提取 Claude/Codex 共用主题工具，旧 Claude Channel 回归保持通过。
+- 本轮 `npm.cmd test` 125/125 通过，无跳过；`npm.cmd run check`、`git diff --check` 通过。本机 `codex.cmd --version` 为 `0.163.0-alpha.11`，`codex.cmd queue --help` 可用。测试的队列出口使用记录参数的模拟 CLI；未把这些结果当作真实 Codex 模型唤醒、跨机回复/ACK 或公网部署验收。
+
 ## 远端 Codex 通知转发（2026-10-15）
 
 - 增加独立转发入口、现有 CLI 的 `relay` 命令及无需 npm 依赖的精简分发目录；使用既有 HTTP SSE 接口，在客户端调用当前任务自己的 Codex App 管道，服务器不登记远端管道。

@@ -1,5 +1,7 @@
 # 远端 Codex 唤醒
 
+日常接入推荐使用 [Codex Mailbox MCP](mailbox-mcp.md)，由 Codex 自动管理订阅与本机队列，无需手动运行下面的后台转发器。下面保留基于桌面 App 管道的独立转发方式。
+
 远端电脑运行轻量转发器，通过 HTTP SSE 订阅 Mailbox，再通过该电脑本机会话导出的 App 管道唤醒当前 Codex 桌面任务。服务器不保存或访问远端管道。当前仅支持已有 Codex 桌面 App 任务，不创建或恢复 agent，不支持 Claude 的远端转发。
 
 ## 准备转发包

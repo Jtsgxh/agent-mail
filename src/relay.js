@@ -14,19 +14,19 @@ export function relayStatePath(env = process.env) {
   return join(base, "AgentMailbox", "relay.db");
 }
 
-// 订阅远端 HTTP，再通过本机 App 入口只唤醒当前任务；绝不上传管道信息。
+// 订阅远端 HTTP，由本机 App 或 MCP 队列入口唤醒绑定任务，绝不上传管道信息。
 export async function runRelay(client, participant, {
   env = process.env, signal, maxMessages = 20, topic,
   onReady = () => {}, onRetry = () => {},
-  retryDelays = notificationRetryDelays,
+  retryDelays = notificationRetryDelays, wake,
 } = {}) {
-  if (participant.kind !== "codex") throw new Error("远端转发目前只支持 Codex 桌面 App");
+  if (participant.kind !== "codex") throw new Error("远端转发目前只支持 Codex");
   if (!Number.isSafeInteger(maxMessages) || maxMessages < 1)
     throw new Error("maxMessages 必须为正整数");
   signal?.throwIfAborted();
-  const context = appContext(env);
-  const app = new CodexApp({ env });
-  await app.probe(context);
+  const context = wake ? { threadId: wake.threadId } : appContext(env);
+  const app = wake ? null : new CodexApp({ env });
+  if (!wake) await app.probe(context);
   const statePath = relayStatePath(env);
   await mkdir(dirname(statePath), { recursive: true });
   const db = new DatabaseSync(statePath);
@@ -90,9 +90,10 @@ export async function runRelay(client, participant, {
               if (!claimed.changes)
                 throw new Error(`消息 #${data.id} 的上次提交结果不明，请先检查原任务，禁止自动重投`);
               try {
-                await app.send(context.threadId,
-                  notificationText({ ...pending, topic: data.topic }, participant.id, client.url, { httpOnly: true }),
-                  { context, signal });
+                if (wake) await wake.send(signal);
+                else await app.send(context.threadId,
+                    notificationText({ ...pending, topic: data.topic }, participant.id, client.url, { httpOnly: true }),
+                    { context, signal });
                 db.prepare("UPDATE deliveries SET status='submitted' WHERE origin=? AND participant=? AND message=?")
                   .run(client.url, participant.id, data.id);
                 count++;

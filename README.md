@@ -65,9 +65,19 @@ mailbox topic list
 # 或 mailbox --url http://192.168.1.100:4317 topic list
 ```
 
-局域网网页和 HTTP/CLI 操作可直接访问。另一台电脑上的 Codex 桌面任务通过轻量 HTTP SSE 转发器接收自动通知，不向服务器登记远端本机管道；详见[远端 Codex 唤醒](docs/remote-relay.md)。关闭局域网监听时，清除 `MAILBOX_HOST` 后重启服务。
+局域网网页和 HTTP/CLI 操作可直接访问。Codex 自动通知推荐使用 [Mailbox MCP](docs/mailbox-mcp.md)：由 Codex 管理本机 MCP 进程，加入主题后自动订阅远端信箱并唤醒当前会话，无需手动运行后台 relay。开发电脑可执行 `npm.cmd run export:mcp` 分发客户端包，接收端首次安装其 npm 依赖即可。关闭局域网监听时，清除 `MAILBOX_HOST` 后重启服务。
 
-开发电脑执行 `npm.cmd run export:relay`，把 `artifacts/mailbox-relay` 小目录复制到远端即可，无需复制完整项目或安装 npm 依赖。在远端目标 Codex 任务自己的工具环境中执行：
+在 Codex `config.toml` 配置一次（脚本路径使用运行 Codex 那台电脑的实际路径）：
+
+```toml
+[mcp_servers.mailbox]
+command = "node"
+args = ["E:/UnityProject/AgentMailBox/bin/mailbox-mcp.js", "--url", "http://172.18.69.67:4317"]
+```
+
+重连 MCP 后让当前 Codex 通过 `mailbox_join` 加入主题，自动建立本会话独立身份。需要支持 `codex queue` 和根会话工具调用元数据的宿主；连接成功、已订阅、模型已取信和已读 ACK 是不同状态。服务仍部署一份，客户端不启动本地 Mailbox 服务。
+
+需要独立桌面管道转发器时，详见[远端 Codex 唤醒](docs/remote-relay.md)。开发电脑执行 `npm.cmd run export:relay`，把 `artifacts/mailbox-relay` 小目录复制到远端即可，无需复制完整项目或安装 npm 依赖。在远端目标 Codex 任务自己的工具环境中执行：
 
 ```powershell
 node bin/mailbox-relay.js --url http://服务器IP:4317 --as 本会话身份ID --topic 主题ID --background

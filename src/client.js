@@ -1,9 +1,9 @@
 export class Client {
-  // 接受本机或局域网 HTTP 地址，供远端 CLI 访问显式开放的服务。
+  // 接受 HTTP/HTTPS 服务地址，供本机、局域网或 TLS 反代后的客户端使用。
   constructor(url = process.env.MAILBOX_URL ?? "http://127.0.0.1:4317") {
     const parsed = new URL(url);
-    if (parsed.protocol !== "http:")
-      throw new Error("信箱地址必须使用 HTTP");
+    if (!["http:", "https:"].includes(parsed.protocol))
+      throw new Error("信箱地址必须使用 HTTP 或 HTTPS");
     this.url = parsed.origin;
   }
   async request(path, data, method = data === undefined ? "GET" : "POST", { timeout = 15000, signal } = {}) {

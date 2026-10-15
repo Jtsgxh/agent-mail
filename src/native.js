@@ -27,9 +27,10 @@ export function notificationText(message, as, url, { httpOnly = false } = {}) {
   );
 }
 
+// 通过已安装的 Codex 原生队列提交通知，保留宿主的权限与会话归属。
 export async function queueCodex(
   program,
-  { thread, endpoint, text, signal, token = process.env.MAILBOX_CODEX_TOKEN },
+  { thread, endpoint, text, signal, token = process.env.MAILBOX_CODEX_TOKEN, env: sourceEnv = process.env },
 ) {
   const args = [
     ...program.args,
@@ -42,7 +43,7 @@ export async function queueCodex(
   if (endpoint) args.push("--remote", endpoint);
   if (endpoint && token)
     args.push("--remote-auth-token-env", "MAILBOX_CODEX_TOKEN");
-  const env = { ...process.env };
+  const env = { ...sourceEnv };
   if (token) env.MAILBOX_CODEX_TOKEN = token;
   else delete env.MAILBOX_CODEX_TOKEN;
   try {
