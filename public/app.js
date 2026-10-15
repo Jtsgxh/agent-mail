@@ -100,6 +100,15 @@ async function copyText(text) {
     previousFocus?.focus({ preventScroll: true });
   }
 }
+// 局域网 HTTP 不提供 randomUUID 时，用仍可用的安全随机数生成同格式请求 ID。
+function createRequestId() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
+}
 async function checkCodexService(start = false) {
   if (checkingCodex) return;
   checkingCodex = true;
@@ -591,7 +600,7 @@ $("#composer").onsubmit = guard(async (e) => {
     reference = replyTo?.id ?? null;
   const key = JSON.stringify({ id, body, ...notification, reference });
   if (pendingPost?.key !== key)
-    pendingPost = { key, requestId: crypto.randomUUID() };
+    pendingPost = { key, requestId: createRequestId() };
   sending = true;
   $("#recipient-picker").open = false;
   $("#send-message").disabled = true;

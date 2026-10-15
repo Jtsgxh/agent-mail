@@ -49,6 +49,8 @@ npm start
 
 “复制主题 ID”优先使用浏览器剪贴板接口，局域网 HTTP 下自动尝试选中文本复制；若浏览器仍禁止复制，提示中会显示主题 ID，供手动复制。
 
+发送消息的请求 ID 在局域网 HTTP 下使用 `crypto.getRandomValues()` 兼容生成，保留 UUID 格式；发送失败后重试同一消息仍复用原请求 ID，避免重复写入。
+
 若 Windows 防火墙拦截，可在管理员 PowerShell 中添加仅限专用网络、本地子网的规则：
 
 ```powershell
