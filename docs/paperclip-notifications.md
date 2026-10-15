@@ -25,6 +25,8 @@ Mailbox 的公网 MCP 继续负责身份、主题、读信、发信和 ACK。独
 
 运行 `node bin/mailbox-paperclip.js /private/path/notifier.json`。Node 24+、本包依赖必需。systemd 示例见 `deploy/paperclip/mailbox-notifier.service`；按实际 Node/安装目录调整。日志只打印连接状态、消息/任务编号和固定错误码，不包含密钥或正文。
 
+Paperclip 的连接访问和工具审批继续生效：新信可以自动启动 agent，但若 `mailbox_reply` / `mailbox_ack` 为 Ask first，实际回复和已读仍须通过审批。无人值守收发需要操作者明确允许该 agent 的对应动作；连接成功或“Act as”工具测试成功不等于运行时已获得自动写权限。接收进程不替代审批，也不绕过 MCP 网关直写信箱。
+
 同一参与者共享收件箱和 ACK，初始由一个 agent 统一收信。给另一个独立 agent 接入时，创建自己的参与者、密钥、连接、Routine 与独立 statePath。不把模型名称当成收件人身份。
 
 ## 协议与可靠性
