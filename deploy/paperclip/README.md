@@ -9,6 +9,7 @@
 - 持久化事件与任务回执：`/var/lib/agent-mailbox-notifier/state.db`。
 - 长连接：`wss://ashwellpages.net:8443/mcp/events`；复用 roguetower 项目范围密钥。
 - 事件目标：Paperclip Routine `8e695032-2b41-4fe4-9ae3-5a963513c5c9`，负责人 Astra PM。每条定向新信创建一个可审计任务；没有定时轮询触发器。
+- 用户选择连接范围统一放权：RogueTower Mailbox 对公司 agent 开放，现有十个动作统一 Allowed。移除本次接入产生的 Astra PM 额外 profile，并停用它遗留的两条 reply/ack 审批规则，保留备份和审计记录；未修改其他连接或 Paperclip 源码。运行时策略检查确认 reply/ack 均为 allow。
 
 Webhook URL 和密钥不写入仓库。部署依赖为本包的 `ws`；仅需复制 `src/paperclip-notifier.js`、`bin/mailbox-paperclip.js`、带 `type:module` 的包元数据与已安装的 `ws`（保留其 LICENSE），或按 lockfile 安装依赖。
 
