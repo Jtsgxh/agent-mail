@@ -3,6 +3,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { HttpError } from "./store.js";
 import { installMailboxTools, connectorToolNames } from "./mailbox-tools.js";
 import http from "node:http";
+import { attachConnectorEvents } from "./connector-events.js";
+import { EventEmitter } from "node:events";
 
 export function createMailboxMcp(store, connectors, token, changed) {
   const grant = connectors.authenticate(token);
@@ -65,7 +67,7 @@ export async function handleMcp(req, res, body, { store, connectors, changed }) 
 }
 
 // Optional network listener: never serves the local administrative API or UI.
-export async function startMcpListener({ port, host = "127.0.0.1", publicUrl, store, connectors, changed }) {
+export async function startMcpListener({ port, host = "127.0.0.1", publicUrl, store, connectors, changed, changes = new EventEmitter() }) {
   if (!["127.0.0.1", "::1", "localhost"].includes(host) && !publicUrl)
     throw new Error("非本机 MCP 监听必须设置 MAILBOX_MCP_PUBLIC_URL");
   let endpoint = publicUrl ? new URL(publicUrl) : null;
@@ -108,8 +110,9 @@ export async function startMcpListener({ port, host = "127.0.0.1", publicUrl, st
   server.headersTimeout = 10000;
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(port, host, resolve); });
   endpoint ??= new URL(`http://${host === "::1" ? "[::1]" : host}:${server.address().port}/mcp`);
+  const stopEvents = attachConnectorEvents(server, { store, connectors, changes, endpoint: () => endpoint });
   return {
     server, url: endpoint.href,
-    close: () => new Promise((resolve, reject) => { server.close((e) => e ? reject(e) : resolve()); server.closeAllConnections(); }),
+    close: () => new Promise((resolve, reject) => { stopEvents(); server.close((e) => e ? reject(e) : resolve()); server.closeAllConnections(); }),
   };
 }

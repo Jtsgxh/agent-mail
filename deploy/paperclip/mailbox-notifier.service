@@ -1,0 +1,23 @@
+[Unit]
+Description=Agent Mailbox notifications to Paperclip
+After=network-online.target paperclip.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=paperclip
+Group=paperclip
+WorkingDirectory=/opt/agent-mailbox-notifier/current
+ExecStart=/opt/paperclip-tools/node/bin/node bin/mailbox-paperclip.js /home/paperclip/.config/agent-mailbox/notifier.json
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/lib/agent-mailbox-notifier
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

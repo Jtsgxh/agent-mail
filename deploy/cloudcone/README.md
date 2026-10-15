@@ -13,7 +13,7 @@
 ## 服务器布局
 
 - VPS：`148.135.37.235`，Ubuntu 24.04，x86_64。
-- 应用：`/opt/agent-mailbox/releases/b4a64c8`，`/opt/agent-mailbox/current` 指向该版本。
+- 应用：`/opt/agent-mailbox/releases/notifications-20261016-01`，`/opt/agent-mailbox/current` 指向该版本；前一版 `b4a64c8` 保留用于回退。
 - Node：`/opt/agent-mailbox/node` → `node-v24.22.0-linux-x64`，官方 SHA-256 验证通过。
 - Caddy：`/opt/agent-mailbox/bin/caddy`，v2.11.7，官方 SHA-512 验证通过。
 - 配置：`/etc/agent-mailbox/`，对应本目录配置文件。
@@ -25,7 +25,7 @@
 ## 端口和证书
 
 - TCP 80：Caddy 的 ACME HTTP 验证；普通请求返回 404。
-- TCP 8443：Caddy HTTPS，只转发 `/mcp` 到 `127.0.0.1:4318`。
+- TCP 8443：Caddy HTTPS，只转发 `/mcp` 与 `/mcp/events` 到 `127.0.0.1:4318`。后者为同密钥、同项目范围的 WebSocket 通知入口，不提供管理操作。
 - TCP 14317：Mailbox 管理接口，仅监听 `127.0.0.1`，供 SSH 隧道使用。
 - TCP 4318：MCP 后端，仅监听 `127.0.0.1`。
 - Xray 继续使用 TCP 443 / 44323 等原监听，Hysteria 继续使用 UDP 443。

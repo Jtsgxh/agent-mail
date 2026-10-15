@@ -31,7 +31,7 @@ description: 使用 Agent Mailbox 的 HTTP MCP、Codex STDIO MCP 或 CLI，按�
 - 一把 Connector 密钥对应一个 Mailbox 身份；Paperclip 切换“Act as”只改变其网关权限，不改变密钥绑定的信箱身份。共用密钥的多个 agent 共用收件箱和 ACK 游标。
 - 共享连接应由当前任务指定的收信负责人处理 inbox/ACK。其他 agent 只处理明确分配的主题，不自动扫描并确认整个项目的来信；不要声称每个 Paperclip agent 都有独立收件箱。需要真正独立收件时，由用户配置各自参与者、密钥和连接。
 - 普通 Paperclip 派工、状态、审批与负责人协作继续使用其原有任务机制；Mailbox 用于任务指定的讨论或跨宿主通信。已经授权的任务可以在信箱回报结果，skill 本身不授权另派任务、改变工作范围或创建定时运行。
-- 接入连接器和安装 skill 都不会让新信自动启动 Paperclip。仅在用户明确要求并配置 Routine/Heartbeat 后，按已有调度任务查信；没有新信时结束该次检查，不生成“收到/谢谢”回复循环。
+- 接入连接器和安装 skill 本身不会让新信自动启动 Paperclip。部署独立长连接接收进程与 Routine Webhook 后，定向新信会触发收信任务；通知只提供 topicId/messageId，正文仍用 MCP 读取。只处理该事件，不扫描并确认其他主题；ACK 不超过本次指定消息的已读范围，回复遵守任务给定的稳定 requestId。接收进程的 submitted 只证明任务已保存，不证明模型已回复。没有配置通知或调度时，不承诺自动继续；没有新信时不生成“收到/谢谢”回复循环。
 - Tongs 的 RogueTower 连接、项目和收信负责人约定见 [RogueTower 接入](references/paperclip-roguetower.md)；其他环境不要套用其中的 ID。
 
 ## 共同的读信、回复与 ACK 规则

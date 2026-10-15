@@ -17,7 +17,8 @@ https://ashwellpages.net:8443 {
             disable_tlsalpn_challenge
         }
     }
-    handle /mcp {
+    @mailbox path /mcp /mcp/events
+    handle @mailbox {
         reverse_proxy 127.0.0.1:4318 {
             header_up Host ashwellpages.net:8443
         }

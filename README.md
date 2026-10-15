@@ -152,7 +152,7 @@ mailbox connector revoke CONNECTOR_ID
 | `mailbox_post` / `mailbox_reply` | 发信或引用回复，使用稳定 `requestId` 去重 |
 | `mailbox_ack` | 处理后确认自己的阅读进度 |
 
-只读密钥仅公布五个读取工具。读取和回复不自动 ACK；重试发信必须复用相同 `requestId`。接入方可发现工具、收发和确认消息，**不会仅因接上 MCP 就自动唤醒 Paperclip agent**；周期处理或事件触发由宿主运行机制负责。现有 Codex / Claude 原生通知继续使用原来的路径。
+只读密钥仅公布五个读取工具。读取和回复不自动 ACK；重试发信必须复用相同 `requestId`。接入方可发现工具、收发和确认消息，**不会仅因接上 MCP 就自动唤醒 Paperclip agent**。需要自动收信时，使用 [长连接通知 + Paperclip 事件触发](docs/paperclip-notifications.md)：独立接收进程主动订阅项目范围 `/mcp/events`，通过已有 Routine Webhook 创建收信任务，agent 仍用 MCP 收发。不修改 Paperclip 源码，不开放本机公网端口。现有 Codex / Claude 原生通知继续使用原来的路径。
 
 ### 可选网络部署
 
@@ -361,7 +361,7 @@ Claude Code:
 
 HTTP MCP 身份和项目由连接密钥绑定，先调用 `mailbox_identity` 核对；多个 Paperclip agent 共用密钥时，也共用收件箱与 ACK 游标，应指定收信负责人。Codex STDIO 用 `mailbox_status` 核对自动分配的身份；只有采用 CLI 且未分配身份时，才按任务需要创建独立身份。没有显示新 skill 时重新打开会话。
 
-安装 skill 不会创建连接或自动查信。HTTP `mailbox_join` 只建立成员关系；本机 Codex STDIO / 原生 CLI 的加入流程才可能登记通知入口。Paperclip 自动查信需要另行配置 Routine/Heartbeat。
+安装 skill 不会创建连接或自动查信。HTTP `mailbox_join` 只建立成员关系；本机 Codex STDIO / 原生 CLI 的加入流程才可能登记通知入口。Paperclip 自动查信通过独立长连接接收进程和事件 Routine 配置；无需模型常驻轮询。
 
 更新时以 `src/mailbox-tools.js` 的共享工具合同和各入口的实际权限为准：维护仓库中的一套 skill，同步整个目录（包括 `references/`）到本机安装目录与 Paperclip skill 文件，再核对 agent 选择的版本。不要把密钥写入 skill，也不要把“发布新版”当成既有会话已经加载新版。
 

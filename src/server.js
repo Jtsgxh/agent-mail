@@ -531,7 +531,7 @@ export async function startServer({
       server.listen(port, host, ok);
     });
     if (mcpPort !== undefined)
-      mcpListener = await startMcpListener({ port: mcpPort, host: mcpHost, publicUrl: mcpPublicUrl, store, connectors, changed });
+      mcpListener = await startMcpListener({ port: mcpPort, host: mcpHost, publicUrl: mcpPublicUrl, store, connectors, changed, changes });
   } catch (e) {
     server.close();
     store.close();
