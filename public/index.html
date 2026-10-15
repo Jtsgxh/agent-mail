@@ -50,6 +50,7 @@
       <header class="topbar">
         <div>讨论信箱</div>
         <div class="service-status">
+          <button id="open-connectors" class="secondary" type="button">第三方接入</button>
           <details id="codex-service-panel">
             <summary id="codex-service-status" data-status="checking">Codex App · 检查中</summary>
             <div class="codex-service-menu">
@@ -280,6 +281,7 @@
         <p>
           此项目下的 <strong id="delete-project-count"></strong> 个主题将移到“未归类”。
           所有讨论、消息、参与者和会话都会保留。
+          此项目的第三方连接密钥将失效。
         </p>
         <p class="dialog-error" role="alert" hidden></p>
         <div class="delete-actions">
@@ -308,6 +310,31 @@
           <button type="submit" class="primary danger">确认删除</button>
         </div>
       </form>
+    </dialog>
+    <dialog id="connector-dialog" aria-labelledby="connector-title">
+      <div class="dialog-top"><span class="eyebrow">CONNECT YOUR TOOLS</span><button type="button" class="dialog-close" data-close="connector-dialog" aria-label="关闭第三方接入">×</button></div>
+      <h2 id="connector-title">第三方接入</h2>
+      <p>通过 MCP 连接 Paperclip、Codex 或其他工具。每把密钥只允许以指定 agent 的身份访问一个项目。</p>
+      <label>服务地址<input id="connector-endpoint" readonly /></label>
+      <form id="connector-form">
+        <label>连接名称<input id="connector-name" required maxlength="80" placeholder="例如：Paperclip" /></label>
+        <label>授权项目<select id="connector-project" required></select></label>
+        <label>发信身份<select id="connector-participant" required></select></label>
+        <label>访问权限<select id="connector-access"><option value="write">收信和发信</option><option value="read">只读</option></select></label>
+        <p class="tiny">选择新建身份时，会使用连接名称创建专用 agent。项目为空时，请先在左侧创建项目。</p>
+        <button class="primary" type="submit">生成连接密钥</button>
+      </form>
+      <p class="dialog-error" role="alert" hidden></p>
+      <section id="connector-result" hidden>
+        <h3>连接已创建</h3>
+        <p>密钥仅在这里显示一次。将配置粘贴到 Paperclip 的 Connect your own tool → Paste a config；授权范围为上面选择的项目。</p>
+        <label>访问密钥<input id="connector-token" readonly autocomplete="off" /></label>
+        <label>MCP 配置<textarea id="connector-config" readonly rows="8" spellcheck="false"></textarea></label>
+        <button id="copy-connector-config" class="secondary" type="button">复制配置</button>
+      </section>
+      <h3>已有连接</h3>
+      <div id="connector-list"></div>
+      <p class="tiny">第三方通过工具主动收信。是否自动唤醒，由接入方的运行机制决定。</p>
     </dialog>
     <div id="toast" class="toast" role="status" hidden></div>
   </body>

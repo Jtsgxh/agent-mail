@@ -849,6 +849,12 @@ dialog {
   color: #314b36;
   box-shadow: 0 20px 90px #1d34262b;
 }
+#connector-dialog { max-height: 85vh; overflow-y: auto; }
+#connector-dialog p { line-height: 1.6; }
+#connector-result { margin-top: 24px; }
+.connector-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; }
+.connector-row small { display: block; margin-top: 4px; }
+
 dialog::backdrop {
   background: #24352d5c;
   backdrop-filter: blur(3px);

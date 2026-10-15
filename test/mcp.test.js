@@ -8,6 +8,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { startServer } from "../src/server.js";
 import { Client } from "../src/client.js";
@@ -113,6 +114,42 @@ test("MCP stdio owns HTTP subscription, coalesces wakes and supports read/reply/
   await mcp.host.close();
   await until(async () => !(await f.client.request("/api/state")).bridges.length);
   assert.equal(f.app.store.notificationRoutes().length, 0);
+});
+
+// 两套真实 MCP 协议共享信箱；仅将最终 Codex 队列出口替换为测试 CLI。
+test("HTTP connector and Codex stdio exchange mail with queue notification and independent ACK", async (t) => {
+  const f = await fixture(t), codex = await f.connect();
+  const project = await f.client.request("/api/projects", { name: "Shared" });
+  await f.client.request(`/api/topics/${f.topic.id}`, { project: project.id }, "PATCH");
+  const peer = await f.client.request("/api/participants", { name: "Third party", kind: "agent" });
+  const credential = await f.client.request("/api/connectors", { name: "Test", as: peer.id, project: project.id });
+  const host = new McpClient({ name: "http-peer", version: "test" });
+  try {
+    await host.connect(new StreamableHTTPClientTransport(new URL(`${f.app.url}/mcp`), {
+      requestInit: { headers: { Authorization: `Bearer ${credential.token}` } },
+    }));
+    const call = async (name, args = {}) => {
+      const result = await host.callTool({ name, arguments: args });
+      assert.ok(!result.isError, result.content[0].text);
+      return JSON.parse(result.content[0].text);
+    };
+    await call("mailbox_join", { topic: f.topic.id });
+    const joined = await codex.call("mailbox_join", { topic: f.topic.id });
+    assert.equal(joined.listening, true);
+    const sent = await call("mailbox_post", { topic: f.topic.id, body: "Review this", to: [joined.participant.id], requestId: "cross-send" });
+    await until(async () => (await codex.call("mailbox_status")).pendingWake?.status === "submitted");
+    assert.equal((await f.queued()).length, 1);
+    const receipt = (await codex.call("mailbox_status")).pendingWake.receipt;
+    assert.equal((await codex.call("mailbox_inbox", { receipt })).notifications[0].id, sent.id);
+    const reply = await codex.call("mailbox_reply", { topic: f.topic.id, message: sent.id, body: "Reviewed", notify: true, requestId: "cross-reply" });
+    assert.equal(reply.author_id, joined.participant.id);
+    assert.equal((await call("mailbox_inbox")).notifications[0].id, reply.id);
+    await call("mailbox_ack", { topic: f.topic.id, through: reply.id });
+    assert.equal((await call("mailbox_inbox")).notifications.length, 0);
+    assert.equal((await codex.call("mailbox_inbox")).notifications[0].id, sent.id);
+    await codex.call("mailbox_ack", { topic: f.topic.id, through: reply.id });
+    assert.equal((await codex.call("mailbox_inbox")).notifications.length, 0);
+  } finally { await host.close(); }
 });
 
 // 缺少宿主证明、子会话和另一任务均不能冒用同一个连接或改变唤醒目标。

@@ -161,3 +161,27 @@ Claude 原生入口的测试使用真实本机命名管道和模拟接收端，�
 - Mailbox 重启后持久路由显示为等待 App。任一 Codex 任务执行普通 `mailbox` 命令时，CLI 自动提交同一信箱的 cookie jar 与当前 App 管道；服务验证哈希后一次恢复全部匹配路由，未确认且尚未成功投递的消息自动续投。显式 `mailbox codex app connect` 使用同一批量恢复路径。
 - 路由 cookie 只能恢复原参与者绑定的原任务，不能更换任务；`disconnect` 同时注销内存入口、删除服务端哈希并让 CLI 删除本地 cookie。Claude 原生入口/token 仍只在内存中，不进入 Codex cookie jar。
 - 新增真实 SQLite 重启、App 管道换址和 CLI 子进程测试：首次加入生成 cookie，确认原文不出现在 CLI/state/SQLite；重启后不执行 `topic join`，仅运行普通 `mailbox inbox` 即恢复并把待投递消息送到原任务；随后重复 `codex app connect` 不重复发送。另覆盖并发 cookie jar 更新、注销撤销、未知结果阻止自动重放。`npm test` 97/97，`npm run check` 和 `git diff --check` 通过。
+
+## MCP Connector / Paperclip（2026-10-10）
+
+本次新增第三方 MCP 接口，自动化语法检查和全部 **84 项测试通过**。其中 6 项 Connector 集成测试使用真实 HTTP、SQLite、官方 MCP SDK 和 CLI 子进程，覆盖完整收发、分页、幂等请求冲突、独立 ACK、项目隔离、拒绝冒用身份、只读工具目录、密钥摘要存储、重启持久化、撤销、项目移动/删除，以及专用 MCP 端口拒绝管理 API。`npm audit --omit=dev` 为 0 漏洞，`git diff --check` 通过。
+
+本机真实验收：
+
+- 信箱管理端口 `127.0.0.1:4317`，专用 MCP 端口 `127.0.0.1:4318`。Docker Desktop 中的 Paperclip 通过 `http://host.docker.internal:4318/mcp` 连接，无凭据请求返回 401；没有开放局域网监听。
+- 通过信箱网页新建 `Paperclip` 项目与 `Paperclip Mailbox` 专用身份，生成项目范围密钥；通过 Paperclip 的 Paste a config 流程保存凭据、健康检查、发现并启用 10 个工具。Paperclip Connectors 页面显示 Agent Mailbox 已连接。
+- 在 Paperclip 的权限页面使用真实 Test 工具网关，以 `Tong PM` 的权限调用 `mailbox_identity`，返回绑定的 `Paperclip Mailbox` 身份及 `Paperclip` 项目。
+- 同一真实网关调用 `mailbox_create_topic` 创建“Paperclip Connector 接入验收 2026-10-10”，再调用 `mailbox_post` 写入消息 #58。独立验收发送端在该主题投递合成消息 #59；Paperclip 调用 `mailbox_inbox` 读到消息，之后调用 `mailbox_ack` 确认到 #59。本地 HTTP 复核待处理通知与未读列表均为空。
+- 验收主题 ID：`957fd5d1-9844-4a90-b89e-5845d5819996`；Paperclip connection ID：`205d1522-844a-4a33-a1de-e5fdfb351929`。验收主题保留，便于查看往返记录。
+- 截图位于被 Git 忽略的 `artifacts/connector/`，包括真实身份、发送、收件和 ACK 成功结果。截图不包含密钥。
+
+以上验证了 Paperclip 实际工具网关的认证、发现、创建主题、发信、收信和 ACK；没有启动模型推理或创建 Paperclip 工作任务。收到信后自动唤醒 Paperclip agent、OAuth 浏览器授权和公网 HTTPS 托管仍未实现。不同 Paperclip agent 若需独立信箱身份，应创建不同参与者和密钥，并在 Paperclip 中分别分配连接。
+
+## 远端更新与 Connector 逻辑合并（2026-10-15）
+
+- `main` 从 `7947d5e` 快进到 `origin/main` 的 `0c9f17f`，接收 9 个提交。合并前的已跟踪与未跟踪改动保存在 stash `ac93a190cbb250e792c0f670b4426b72f56866c9`，保留用于恢复。
+- 远端 `src/mcp.js` 保持 Codex STDIO、宿主身份绑定和队列通知逻辑；本地第三方 HTTP MCP 移至 `src/connector-mcp.js`，保留项目密钥、只读、撤销及独立端口。整合启动参数、CLI、依赖和两组检查项。
+- Connector 配置生成使用已校验的请求地址，兼容局域网网页和 CLI；专用 MCP 地址仍优先。`start:connector` 支持 `MAILBOX_HOST`。配置复制复用 HTTP 兼容实现，临时文本框位于当前弹窗内，失败提示不回显密钥。
+- 首轮回归暴露 Windows 锁文件删除期间的瞬时 EPERM：取得排他锁之前有限重试，持续权限错误仍明确失败。旧宿主失败启动测试从 200ms 改为 3s，并分别断言退出/超时，避免并发负载下子进程尚未写 PID 就被终止。
+- `npm test` **133/133 通过**，无跳过；`npm run check`、`git diff --check` 通过。新增 HTTP Connector 与 Codex STDIO 的互发、队列通知、独立 ACK 集成测试，使用真实 MCP SDK、HTTP、STDIO 和 SQLite；最终队列出口为记录调用的测试 CLI，不代表本轮调用了真实模型或重新验收了 Paperclip 页面。
+- 本轮仅整合代码及临时测试实例，未重启现有信箱服务；按用户要求提交到本地 Git，未推送远端。

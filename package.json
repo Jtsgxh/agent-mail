@@ -12,19 +12,18 @@
   },
   "scripts": {
     "start": "node src/server.js",
+    "start:connector": "node scripts/start-connector.js",
     "cli": "node bin/mailbox.js",
     "export:relay": "node scripts/export-relay.js",
     "export:mcp": "node scripts/export-mcp.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/server.js && node --check src/store.js && node --check bin/mailbox.js && node --check src/codex.js && node --check src/claude.js && node --check src/connect.js && node --check public/app.js && node --check src/native.js && node --check src/notifications.js && node --check src/sessions.js && node --check scripts/start-codex.js && node --check scripts/smoke-sessions.js && node --check src/codex-app.js && node --check src/desktop-sessions.js && node --check src/notification-recovery.js && node --check src/route-cookies.js && node --check src/client.js && node --check src/relay.js && node --check bin/mailbox-relay.js && node --check scripts/export-relay.js && node --check src/mcp.js && node --check src/mailbox-tools.js && node --check bin/mailbox-mcp.js && node --check scripts/export-mcp.js"
+    "check": "node --check src/server.js && node --check src/store.js && node --check bin/mailbox.js && node --check src/codex.js && node --check src/claude.js && node --check src/connect.js && node --check public/app.js && node --check src/native.js && node --check src/notifications.js && node --check src/sessions.js && node --check scripts/start-codex.js && node --check scripts/smoke-sessions.js && node --check src/codex-app.js && node --check src/desktop-sessions.js && node --check src/notification-recovery.js && node --check src/route-cookies.js && node --check src/client.js && node --check src/relay.js && node --check bin/mailbox-relay.js && node --check scripts/export-relay.js && node --check src/mcp.js && node --check src/mailbox-tools.js && node --check bin/mailbox-mcp.js && node --check scripts/export-mcp.js && node --check src/connectors.js && node --check src/connector-mcp.js && node --check scripts/start-connector.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "dompurify": "^3.0.0",
     "marked": "^17.0.0",
-    "ws": "^8.21.3"
-  },
-  "devDependencies": {
+    "ws": "^8.21.3",
     "zod": "^4.5.4"
   }
 }

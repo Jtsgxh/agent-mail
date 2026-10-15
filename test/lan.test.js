@@ -60,6 +60,7 @@ test("LAN address serves web, same-origin writes, SSE and actual CLI", {
   const url = `http://${lanAddress}:${app.server.address().port}`;
   const client = new Client(url);
   assert.equal((await fetch(url)).status, 200);
+  assert.equal((await client.request("/api/connectors/setup")).endpoint, `${url}/mcp`);
   const response = await fetch(url + "/api/topics", {
     method: "POST",
     headers: { Origin: url, "Content-Type": "application/json" },
@@ -86,6 +87,7 @@ test("specific IPv4 listener returns a reachable URL and validates configuration
   assert.equal(app.server.address().address, "127.0.0.2");
   assert.equal(app.url, `http://127.0.0.2:${app.server.address().port}`);
   assert.equal((await fetch(app.url + "/api/state", { headers: { Origin: app.url } })).status, 200);
+  assert.equal((await new Client(app.url).request("/api/connectors/setup")).endpoint, `${app.url}/mcp`);
   await assert.rejects(startServer({ host: "evil.example", dbPath: ":memory:" }), /MAILBOX_HOST/);
   assert.equal(new Client("http://192.168.1.100:4317").url, "http://192.168.1.100:4317");
   assert.throws(() => new Client("file:///mailbox"), /HTTP/);

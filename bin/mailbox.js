@@ -26,6 +26,9 @@ mailbox project rename NAME_OR_ID --name NEW_NAME
 mailbox project delete NAME_OR_ID
 mailbox participant create --name NAME [--kind codex|claude|agent]
 mailbox participant list
+mailbox connector create --name NAME --as AGENT_ID --project NAME_OR_ID [--read-only]
+mailbox connector list
+mailbox connector revoke CONNECTOR_ID
 mailbox session create codex --topic TOPIC --cwd PATH --as INITIATOR_ID [--timeout 60]
 mailbox session info codex --topic TOPIC
 mailbox topic create --title TITLE --body TEXT [--as ID] [--project NAME_OR_ID]
@@ -74,6 +77,7 @@ try {
       preview: { type: "boolean" },
       background: { type: "boolean" },
       manual: { type: "boolean" },
+      "read-only": { type: "boolean" },
       unassigned: { type: "boolean" },
       broadcast: { type: "boolean" },
       to: { type: "string", multiple: true },
@@ -174,7 +178,22 @@ try {
     return matches[0].id;
   };
   let result;
-  if (p[0] === "codex" && p[1] === "app" && ["connect", "status"].includes(p[2])) {
+  if (p[0] === "connector" && p[1] === "create") {
+    const { endpoint } = await client.request("/api/connectors/setup");
+    const created = await client.request("/api/connectors", {
+      name: requireValue("name"), as: requireValue("as"),
+      project: await projectId(requireValue("project")), readOnly: !!v["read-only"],
+    });
+    result = { ...created, endpoint,
+      warning: "密钥只显示一次，请保存在接入方的密钥库；不要提交到 Git。",
+      config: { mcpServers: { "agent-mailbox": { url: endpoint, headers: { Authorization: `Bearer ${created.token}` } } } },
+    };
+  } else if (p[0] === "connector" && p[1] === "list") {
+    result = await client.request("/api/connectors");
+  } else if (p[0] === "connector" && p[1] === "revoke") {
+    if (!p[2]) throw new Error("缺少 Connector ID");
+    result = await client.request(`/api/connectors/${encodeURIComponent(p[2])}`, undefined, "DELETE");
+  } else if (p[0] === "codex" && p[1] === "app" && ["connect", "status"].includes(p[2])) {
     if (p[2] === "connect") {
       const { appContext } = await import("../src/codex-app.js");
       const context = appContext();

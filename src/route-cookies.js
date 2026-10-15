@@ -56,14 +56,18 @@ async function writeJar(path, jar) {
 async function updateJar(path, update) {
   await mkdir(dirname(path), { recursive: true });
   const lockPath = `${path}.lock`;
-  let lock;
+  let lock, lastLockError;
   for (let attempt = 0; attempt < 200; attempt++) {
     try {
       lock = await open(lockPath, "wx", 0o600);
       break;
     } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      const lockStat = await stat(lockPath).catch(() => null);
+      // Windows may briefly report access denied while another process deletes
+      // its lock. Retry exclusive creation; never proceed without owning it.
+      const deleting = process.platform === "win32" && ["EPERM", "EACCES"].includes(error.code);
+      if (error.code !== "EEXIST" && !deleting) throw error;
+      lastLockError = error;
+      const lockStat = !deleting && await stat(lockPath).catch(() => null);
       if (lockStat && Date.now() - lockStat.mtimeMs > 30000) {
         await unlink(lockPath).catch(() => {});
         continue;
@@ -71,7 +75,10 @@ async function updateJar(path, update) {
       await new Promise((resolveWait) => setTimeout(resolveWait, 10));
     }
   }
-  if (!lock) throw new Error("路由 cookie jar 正在被其他进程占用");
+  if (!lock) {
+    if (lastLockError?.code !== "EEXIST") throw lastLockError;
+    throw new Error("路由 cookie jar 正在被其他进程占用");
+  }
   try {
     const jar = await readJar(path);
     const next = await update(jar);

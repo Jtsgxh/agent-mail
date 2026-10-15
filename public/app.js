@@ -71,7 +71,7 @@ function guard(fn) {
   };
 }
 // 优先使用剪贴板接口；局域网 HTTP 或权限受限时退回选中文本复制。
-async function copyText(text) {
+async function copyText(text, failureMessage = `复制失败，请手动复制主题 ID：${text}`) {
   if (navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);
@@ -88,13 +88,13 @@ async function copyText(text) {
   input.style.top = "0";
   input.style.left = "0";
   input.style.opacity = "0";
-  document.body.append(input);
+  (previousFocus?.closest?.("dialog[open]") ?? document.body).append(input);
   try {
     input.focus({ preventScroll: true });
     input.select();
     if (!document.execCommand("copy")) throw new Error("copy rejected");
   } catch {
-    throw new Error(`复制失败，请手动复制主题 ID：${text}`);
+    throw new Error(failureMessage);
   } finally {
     input.remove();
     previousFocus?.focus({ preventScroll: true });
@@ -721,3 +721,62 @@ events.addEventListener("change", () => {
 });
 refresh().catch((e) => toast(e.message, true));
 checkCodexService();
+
+async function renderConnectors() {
+  const connections = await api("/connectors");
+  $("#connector-list").innerHTML = connections.length ? connections.map((c) =>
+    `<div class="connector-row"><span><strong>${escapeHtml(c.name)}</strong><small>${escapeHtml(c.project_name)} · ${c.read_only ? "只读" : "收信和发信"} · ${c.revoked_at ? "已撤销" : "有效"}</small></span>${c.revoked_at ? "" : `<button type="button" class="text-button danger" data-revoke-connector="${escapeHtml(c.id)}">撤销</button>`}</div>`
+  ).join("") : '<p class="muted">还没有第三方连接。</p>';
+}
+$("#open-connectors").onclick = guard(async () => {
+  await refresh();
+  $("#connector-project").innerHTML = state.projects.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join("");
+  if (state.projects.some((p) => p.id === projectFilter)) $("#connector-project").value = projectFilter;
+  $("#connector-participant").innerHTML = '<option value="new">新建专用 agent</option>' + state.participants.filter((p) => p.kind !== "human").map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join("");
+  $("#connector-endpoint").value = (await api("/connectors/setup")).endpoint;
+  $("#connector-dialog .dialog-error").hidden = true;
+  await renderConnectors();
+  $("#connector-dialog").showModal();
+});
+$("#connector-form").onsubmit = guard(async (event) => {
+  event.preventDefault();
+  const button = event.target.querySelector('[type="submit"]');
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    const name = $("#connector-name").value.trim();
+    const project = $("#connector-project").value;
+    if (!project) throw new Error("请先创建并选择授权项目");
+    let as = $("#connector-participant").value;
+    if (as === "new") {
+      const participant = await api("/participants", { name, kind: "agent" });
+      const option = new Option(participant.name, participant.id, true, true);
+      $("#connector-participant").add(option);
+      as = participant.id;
+    }
+    const c = await api("/connectors", { name, as, project, readOnly: $("#connector-access").value === "read" });
+    $("#connector-token").value = c.token;
+    $("#connector-config").value = JSON.stringify({ mcpServers: { "agent-mailbox": { url: $("#connector-endpoint").value, headers: { Authorization: `Bearer ${c.token}` } } } }, null, 2);
+    $("#connector-result").hidden = false;
+    await renderConnectors();
+  } finally { button.disabled = false; }
+});
+$("#connector-dialog").addEventListener("close", () => {
+  $("#connector-token").value = "";
+  $("#connector-config").value = "";
+  $("#connector-result").hidden = true;
+});
+$("#copy-connector-config").onclick = guard(async () => {
+  await copyText($("#connector-config").value, "复制失败，请在配置框中手动复制");
+  toast("已复制 MCP 配置，请保存在接入方的密钥库");
+});
+$("#connector-list").onclick = guard(async (event) => {
+  const button = event.target.closest("[data-revoke-connector]");
+  if (!button || button.disabled) return;
+  button.disabled = true;
+  try {
+    await api(`/connectors/${encodeURIComponent(button.dataset.revokeConnector)}`, undefined, "DELETE");
+    await renderConnectors();
+    toast("连接密钥已撤销，后续调用将被拒绝");
+  } finally { button.disabled = false; }
+});

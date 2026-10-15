@@ -109,7 +109,9 @@ test("occupied non-Codex port is not replaced and the configuration is unchanged
 for (const mode of ["exit", "hang"])
   test(`failed startup ${mode} releases its child and does not save readiness`, async (t) => {
     const f = await fixture(t, mode);
-    await assert.rejects(startCodexHost({ ...f.options, timeout: 200 }), /退出|超时/);
+    // Allow the child to execute under the full suite's parallel process load.
+    // Require the intended failure mode, rather than killing it before its PID is recorded.
+    await assert.rejects(startCodexHost({ ...f.options, timeout: 3000 }), mode === "exit" ? /退出/ : /超时/);
     assert.equal(await readFile(f.configPath, "utf8"), f.before);
     const pid = Number(await readFile(f.pidFile, "utf8"));
     await until(() => !alive(pid));

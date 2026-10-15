@@ -6,10 +6,11 @@ import { runInNewContext } from "node:vm";
 const source = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 // 执行真实复制函数和按钮绑定，隔离页面启动时的网络请求与定时刷新。
 const copySource = source.slice(0, source.indexOf("async function checkCodexService"))
-  + source.slice(source.indexOf('$("#copy-topic").onclick'), source.indexOf('$("#ack-visible").onclick'));
+  + source.slice(source.indexOf('$("#copy-topic").onclick'), source.indexOf('$("#ack-visible").onclick'))
+  + source.slice(source.indexOf('$("#copy-connector-config").onclick'), source.indexOf('$("#connector-list").onclick'));
 
 // 模拟浏览器剪贴板和必要 DOM，记录复制内容、焦点恢复和成功/失败提示。
-function browser({ clipboard, legacy = true, legacyThrows = false } = {}) {
+function browser({ clipboard, legacy = true, legacyThrows = false, modal = false } = {}) {
   const nodes = new Map();
   const record = { copied: null, restored: false, input: null };
   const document = {
@@ -20,7 +21,10 @@ function browser({ clipboard, legacy = true, legacyThrows = false } = {}) {
       });
       return nodes.get(selector);
     },
-    activeElement: { focus() { record.restored = true; } },
+    activeElement: {
+      focus() { record.restored = true; },
+      closest() { return modal ? { append(input) { record.input = input; input.attached = true; input.inDialog = true; } } : null; },
+    },
     body: { append(input) { record.input = input; input.attached = true; } },
     createElement(tag) {
       assert.equal(tag, "textarea");
@@ -47,6 +51,22 @@ function browser({ clipboard, legacy = true, legacyThrows = false } = {}) {
   });
   return { record, nodes, click: () => nodes.get("#copy-topic").onclick() };
 }
+
+test("connector config copies inside a modal on HTTP and failure does not echo credentials", async () => {
+  const config = '{"headers":{"Authorization":"Bearer synthetic-test-secret"}}';
+  for (const legacy of [true, false]) {
+    const page = browser({ modal: true, legacy });
+    page.nodes.set("#connector-config", { value: config });
+    await page.nodes.get("#copy-connector-config").onclick();
+    assert.equal(page.record.input.inDialog, true);
+    assert.equal(page.record.input.attached, false);
+    assert.equal(page.record.restored, true);
+    assert.equal(page.record.copied, legacy ? config : null);
+    assert.equal(page.nodes.get("#toast").textContent, legacy
+      ? "已复制 MCP 配置，请保存在接入方的密钥库"
+      : "复制失败，请在配置框中手动复制");
+  }
+});
 
 // 安全上下文继续使用原接口，不创建临时文本框。
 test("copy button prefers Clipboard API", async () => {

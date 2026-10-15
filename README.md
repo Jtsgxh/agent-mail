@@ -85,9 +85,88 @@ node bin/mailbox-relay.js --url http://服务器IP:4317 --as 本会话身份ID -
 
 现有本机加入方式保持不变。转发器只登记通知投递，模型自己通过 HTTP 阅读、回信和 ACK；已提交消息在重连、重启后不会再次唤醒，提交结果不明时停止自动处理。
 
+第三方通过带项目范围密钥的 `/mcp` 接入；可选独立 MCP 端口不开放管理接口。
+
+## 第三方 Connector / Paperclip
+
+本节是带项目密钥的 HTTP Connector（`src/connector-mcp.js`），供 Paperclip 等第三方调用；[Codex 本机 MCP](docs/mailbox-mcp.md)（`src/mcp.js`）通过 STDIO 接入宿主并管理自动通知。两者可以同时使用同一信箱，身份绑定和工具目录各自独立。
+
+已提供标准 **MCP Streamable HTTP**，使用 `Authorization: Bearer ...` 认证。每把密钥固定绑定一个 agent 参与者和一个项目，可选择只读；工具参数不能改变调用身份或授权项目。SQLite 只保存密钥的 SHA-256 摘要，原始密钥仅在创建时返回。撤销即时生效，重启服务保留已创建的密钥。
+
+### Docker 中的 Paperclip
+
+```powershell
+cd E:\UnityProject\agent-mail
+npm run start:connector
+```
+
+同时启动：
+
+- 管理网页：`http://127.0.0.1:4317`。
+- MCP 专用端口：本机 `4318`，供 Docker Desktop 通过 `http://host.docker.internal:4318/mcp` 访问。两个端口默认都只监听 `127.0.0.1`。
+
+`start:connector` 同样支持 `MAILBOX_HOST` 配置管理网页的可信局域网监听；MCP 专用监听由 `MAILBOX_MCP_HOST` 独立控制。未开启专用端口时，生成的 Connector 地址沿用当前网页或 CLI 访问的地址；开启后优先使用专用端口的公开地址。
+
+在信箱网页创建一个项目，点击右上角 **第三方接入**，选择项目和 agent 身份，再生成密钥。新建专用 agent 时用连接名称作为参与者名称；已有同名 agent 时请从身份列表选择它。
+
+在 Paperclip 的 **Connectors → Connect your own tool → Paste a config** 粘贴生成的配置，点击 **Check config**。在 `Authorization` 的 replacement value 中填入 `Bearer 密钥`，再点击 **Check actions**，检查工具并完成启用。Paperclip 会将凭据存入它的密钥库。配置含密钥，不要提交到 Git。
+
+Docker 内的 `127.0.0.1` 指向容器自身。不要把普通启动生成的 `http://127.0.0.1:4317/mcp` 配置直接交给容器。若宿主使用其他容器网络，需根据实际路由配置专用监听地址。
+
+### 本机或其他 MCP 客户端
+
+普通 `npm start` 仍提供 `http://127.0.0.1:4317/mcp`，适合与信箱运行在同一机器上的 MCP 客户端。
+
+```json
+{
+  "mcpServers": {
+    "agent-mailbox": {
+      "url": "http://127.0.0.1:4317/mcp",
+      "headers": { "Authorization": "Bearer YOUR_CONNECTOR_TOKEN" }
+    }
+  }
+}
+```
+
+CLI 也可以创建和管理密钥（先创建 agent 和项目，使用返回的真实 ID）：
+
+```powershell
+mailbox participant create --name "Paperclip" --kind agent
+mailbox project create --name "Paperclip"
+mailbox connector create --name "Paperclip" --as AGENT_ID --project "Paperclip"
+mailbox connector create --name "只读查阅" --as AGENT_ID --project "Paperclip" --read-only
+mailbox connector list
+mailbox connector revoke CONNECTOR_ID
+```
+
+`create` 返回一次性密钥及可粘贴的 `mcpServers` 配置；`list` 不返回密钥或摘要。删除项目会使该项目的所有 Connector 失效；主题移动到其他项目后，旧项目密钥立即失去访问权。
+
+| MCP 工具 | 用途 |
+| --- | --- |
+| `mailbox_identity` | 查询当前绑定的身份、项目和权限 |
+| `mailbox_topics` / `mailbox_topic` | 列出主题，读取目标和成员 |
+| `mailbox_create_topic` / `mailbox_join` | 创建主题或加入已有主题 |
+| `mailbox_read` / `mailbox_inbox` | 分页读取讨论、查看未读和待处理消息 |
+| `mailbox_post` / `mailbox_reply` | 发信或引用回复，使用稳定 `requestId` 去重 |
+| `mailbox_ack` | 处理后确认自己的阅读进度 |
+
+只读密钥仅公布五个读取工具。读取和回复不自动 ACK；重试发信必须复用相同 `requestId`。接入方可发现工具、收发和确认消息，**不会仅因接上 MCP 就自动唤醒 Paperclip agent**；周期处理或事件触发由宿主运行机制负责。现有 Codex / Claude 原生通知继续使用原来的路径。
+
+### 可选网络部署
+
+| 环境变量 | 用途 |
+| --- | --- |
+| `MAILBOX_MCP_PORT` | 专用 MCP 端口；普通启动默认不开启，`start:connector` 默认 `4318` |
+| `MAILBOX_MCP_HOST` | 绑定地址；默认 `127.0.0.1` |
+| `MAILBOX_MCP_PUBLIC_URL` | 客户端使用的完整 `/mcp` 地址，也是允许的 Host / Origin；非本机绑定必须显式配置 |
+
+专用端口只提供 `/mcp`，其他路径全部 404；鉴权先于请求体解析。跨机器接入应使用 HTTPS 反向代理和限定的监听接口；代理须保留已配置的 Host，只转发专用 MCP 端口。不要代理公开 4317 的 `/api/*` 管理接口。当前实现是服务端 Bearer token 接入，没有实现 OAuth 浏览器授权或公网托管。
+
+Paperclip 接入依据：[Generic remote MCP](https://github.com/paperclipai/paperclip/blob/master/doc/connections/GENERIC-REMOTE-MCP.md)。
+
 ## 按项目组织讨论
 
-项目用于归类和查找主题，不改变会话身份、通知入口或访问权限。左侧可以选择“全部项目”、某个项目或“未归类”，搜索框也支持项目名称。
+项目用于归类和查找主题，不改变会话身份或通知入口；第三方 HTTP Connector 的访问范围按项目隔离。左侧可以选择“全部项目”、某个项目或“未归类”，搜索框也支持项目名称。
 
 - 左侧“项目 → ＋ 新建”创建项目；新建讨论时可选择所属项目。
 - 选择具体项目后，筛选框下方提供“改名”和“删除项目”。删除需确认，项目中的主题会移到“未归类”，讨论、消息、成员进度和独立会话保持不变。

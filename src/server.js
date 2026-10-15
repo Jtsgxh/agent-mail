@@ -12,6 +12,8 @@ import { startCodexHost } from "../scripts/start-codex.js";
 import { CodexApp } from "./codex-app.js";
 import { launchDesktopSession } from "./desktop-sessions.js";
 import { createRouteCookie, hashRouteCookie } from "./route-cookies.js";
+import { Connectors } from "./connectors.js";
+import { handleMcp, startMcpListener } from "./connector-mcp.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const assets = new Map([
@@ -35,6 +37,9 @@ export async function startServer({
   dbPath = resolve(root, ".mailbox/mailbox.db"),
   codexHostOptions,
   codexAppOptions,
+  mcpPort,
+  mcpHost,
+  mcpPublicUrl,
 } = {}) {
   if (host !== "localhost" && !isIPv4(host))
     throw new Error("MAILBOX_HOST 必须是 IPv4 地址或 localhost");
@@ -51,6 +56,7 @@ export async function startServer({
   const mailboxUrl = () =>
     `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${server.address().port}`;
   const store = new Store(dbPath);
+  const connectors = new Connectors(store);
   const changes = new EventEmitter();
   changes.setMaxListeners(0);
   const streams = new Set();
@@ -58,6 +64,7 @@ export async function startServer({
   const bridgeStreams = new Map();
   const codexStartup = new AbortController();
   let codexStarting = null;
+  let mcpListener;
   const codexApp = new CodexApp(codexAppOptions);
   const appLaunches = new Map();
   const changed = () => {
@@ -135,6 +142,9 @@ export async function startServer({
       const url = new URL(req.url, `http://${requestHost}`);
       const path = url.pathname;
       const query = Object.fromEntries(url.searchParams);
+      // A connector credential is never an administrative API credential.
+      if (path !== "/mcp" && req.headers.authorization)
+        throw new HttpError(403, "Connector 只能调用 /mcp");
       let body = {};
       if (["POST", "PATCH"].includes(req.method)) {
         if (!req.headers["content-type"]?.startsWith("application/json"))
@@ -154,6 +164,17 @@ export async function startServer({
         if (!body || typeof body !== "object" || Array.isArray(body))
           throw new HttpError(400, "需要 JSON 对象");
       }
+      if (path === "/mcp")
+        return await handleMcp(req, res, body, { store, connectors, changed });
+      if (path === "/api/connectors" && req.method === "GET")
+        return send(connectors.list());
+      if (path === "/api/connectors" && req.method === "POST")
+        return send(connectors.create(body), 201);
+      if (path === "/api/connectors/setup" && req.method === "GET")
+        return send({ endpoint: mcpListener?.url ?? `${url.origin}/mcp` });
+      const connectorRoute = path.match(/^\/api\/connectors\/([^/]+)$/);
+      if (connectorRoute && req.method === "DELETE")
+        return send(connectors.revoke(connectorRoute[1]));
       if (
         req.method === "GET" &&
         (path === "/api/events" || path === "/api/bridge/events")
@@ -509,7 +530,10 @@ export async function startServer({
       server.once("error", fail);
       server.listen(port, host, ok);
     });
+    if (mcpPort !== undefined)
+      mcpListener = await startMcpListener({ port: mcpPort, host: mcpHost, publicUrl: mcpPublicUrl, store, connectors, changed });
   } catch (e) {
+    server.close();
     store.close();
     throw e;
   }
@@ -517,11 +541,13 @@ export async function startServer({
     server,
     store,
     url: mailboxUrl(),
+    mcpUrl: mcpListener?.url,
     async close() {
       codexStartup.abort(new Error("信箱服务停止，取消尚未完成的 Codex 启动"));
       await codexStarting?.catch(() => {});
       await Promise.allSettled([...appLaunches.values()].map((launch) => launch.task));
       await recipients.close();
+      await mcpListener?.close();
       for (const stream of streams) stream.end();
       await new Promise((ok, fail) => {
         server.close((e) => (e ? fail(e) : ok()));
@@ -540,8 +566,12 @@ if (
     port: number(process.env.MAILBOX_PORT ?? 4317, "MAILBOX_PORT", 1, 65535),
     host: process.env.MAILBOX_HOST ?? "127.0.0.1",
     dbPath: process.env.MAILBOX_DB,
+    mcpPort: process.env.MAILBOX_MCP_PORT ? number(process.env.MAILBOX_MCP_PORT, "MAILBOX_MCP_PORT", 1, 65535) : undefined,
+    mcpHost: process.env.MAILBOX_MCP_HOST,
+    mcpPublicUrl: process.env.MAILBOX_MCP_PUBLIC_URL,
   });
   console.log(`Agent Mailbox → ${app.url}（监听 ${app.server.address().address}:${app.server.address().port}）`);
+  if (app.mcpUrl) console.log(`MCP Connector → ${app.mcpUrl}`);
   let closing = false;
   for (const signal of ["SIGINT", "SIGTERM"])
     process.on(signal, async () => {
