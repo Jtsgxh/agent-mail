@@ -1,4 +1,6 @@
 import http from "node:http";
+import { isIPv4 } from "node:net";
+import { networkInterfaces } from "node:os";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
@@ -26,12 +28,28 @@ const assets = new Map([
   ],
 ]);
 
+// 默认仅监听本机；显式配置 IPv4 地址后允许通过该地址访问。
 export async function startServer({
   port = 4317,
+  host = "127.0.0.1",
   dbPath = resolve(root, ".mailbox/mailbox.db"),
   codexHostOptions,
   codexAppOptions,
 } = {}) {
+  if (host !== "localhost" && !isIPv4(host))
+    throw new Error("MAILBOX_HOST 必须是 IPv4 地址或 localhost");
+  // 只信任监听地址及本机网卡地址，避免任意 Host 绕过跨站访问限制。
+  const hostnames = new Set(["127.0.0.1", "localhost"]);
+  if (host === "0.0.0.0") {
+    for (const addresses of Object.values(networkInterfaces()))
+      for (const address of addresses ?? [])
+        if (address.family === "IPv4") hostnames.add(address.address);
+  } else {
+    hostnames.add(host);
+  }
+  // 通知和新建桌面任务使用可连接的本机地址，不能使用通配监听地址。
+  const mailboxUrl = () =>
+    `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${server.address().port}`;
   const store = new Store(dbPath);
   const changes = new EventEmitter();
   changes.setMaxListeners(0);
@@ -48,7 +66,7 @@ export async function startServer({
   };
   const recipients = new NativeRecipients(
     store,
-    () => `http://127.0.0.1:${server.address().port}`,
+    mailboxUrl,
     changed,
     codexApp,
   );
@@ -98,18 +116,14 @@ export async function startServer({
       res.end(JSON.stringify(data));
     };
     try {
-      const host = req.headers.host;
+      const requestHost = req.headers.host;
       const actualPort = server.address().port;
-      if (
-        ![`127.0.0.1:${actualPort}`, `localhost:${actualPort}`].includes(host)
-      )
-        throw new HttpError(403, "仅允许本机访问");
+      const allowedHosts = [...hostnames].map((name) => `${name}:${actualPort}`);
+      if (!allowedHosts.includes(requestHost))
+        throw new HttpError(403, "不允许的访问地址");
       if (
         req.headers.origin &&
-        ![
-          `http://127.0.0.1:${actualPort}`,
-          `http://localhost:${actualPort}`,
-        ].includes(req.headers.origin)
+        !allowedHosts.some((address) => req.headers.origin === `http://${address}`)
       ) {
         throw new HttpError(403, "不允许跨站请求");
       }
@@ -118,7 +132,7 @@ export async function startServer({
         "Content-Security-Policy",
         "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'",
       );
-      const url = new URL(req.url, `http://${host}`);
+      const url = new URL(req.url, `http://${requestHost}`);
       const path = url.pathname;
       const query = Object.fromEntries(url.searchParams);
       let body = {};
@@ -334,7 +348,7 @@ export async function startServer({
           if (!res.writableEnded) controller.abort(new Error("创建请求已断开，请检查原记录，不要重复创建"));
         });
         const task = launchDesktopSession(store, codexApp, topic, body, {
-          url: `http://127.0.0.1:${actualPort}`, changed,
+          url: mailboxUrl(), changed,
           signal: AbortSignal.any([controller.signal, codexStartup.signal]),
         });
         appLaunches.set(topic, { controller, task });
@@ -493,7 +507,7 @@ export async function startServer({
   try {
     await new Promise((ok, fail) => {
       server.once("error", fail);
-      server.listen(port, "127.0.0.1", ok);
+      server.listen(port, host, ok);
     });
   } catch (e) {
     store.close();
@@ -502,7 +516,7 @@ export async function startServer({
   return {
     server,
     store,
-    url: `http://127.0.0.1:${server.address().port}`,
+    url: mailboxUrl(),
     async close() {
       codexStartup.abort(new Error("信箱服务停止，取消尚未完成的 Codex 启动"));
       await codexStarting?.catch(() => {});
@@ -524,9 +538,10 @@ if (
 ) {
   const app = await startServer({
     port: number(process.env.MAILBOX_PORT ?? 4317, "MAILBOX_PORT", 1, 65535),
+    host: process.env.MAILBOX_HOST ?? "127.0.0.1",
     dbPath: process.env.MAILBOX_DB,
   });
-  console.log(`Agent Mailbox → ${app.url}`);
+  console.log(`Agent Mailbox → ${app.url}（监听 ${app.server.address().address}:${app.server.address().port}）`);
   let closing = false;
   for (const signal of ["SIGINT", "SIGTERM"])
     process.on(signal, async () => {

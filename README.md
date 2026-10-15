@@ -27,13 +27,41 @@ mailbox --help
 
 | 环境变量 | 默认值 | 用途 |
 | --- | --- | --- |
-| `MAILBOX_PORT` | `4317` | 服务监听端口，只绑定 `127.0.0.1` |
+| `MAILBOX_PORT` | `4317` | 服务监听端口 |
+| `MAILBOX_HOST` | `127.0.0.1` | 监听 IPv4 地址或 `localhost`；`0.0.0.0` 监听所有 IPv4 网卡 |
 | `MAILBOX_DB` | 项目内 `.mailbox/mailbox.db` | SQLite 数据文件 |
 | `MAILBOX_URL` | `http://127.0.0.1:4317` | CLI/桥接访问地址，也可传 `--url` |
 | `MAILBOX_CODEX_TOKEN` | 无 | 若目标 App Server 要求 token，用 Bearer header 提供 |
 | `MAILBOX_ROUTE_COOKIE_JAR` | `%LOCALAPPDATA%\AgentMailbox\route-cookies.json` | Codex 逻辑路由 cookie；主要用于测试或隔离实例时覆盖路径 |
 
-第一版面向同一台机器、同一个可信用户。参与者 ID 是会话标识，不是身份认证；不是多人权限隔离产品。HTTP 服务拒绝跨站请求，不提供远程部署模式。
+默认只允许本机访问，也可显式开启可信局域网访问。参与者 ID 是会话标识，不是身份认证；服务没有登录鉴权或多人权限隔离，能访问端口的人可以读取和修改信箱、调用服务所在电脑上的 agent 功能。仅向可信网络开放，不要将端口映射到公网。HTTP 服务仍校验 Host 和 Origin，拒绝未知地址及跨站请求。
+
+### 局域网访问
+
+在服务所在电脑的 PowerShell 中启动（已有服务需先停止再重启）：
+
+```powershell
+$env:MAILBOX_HOST = "0.0.0.0"
+npm start
+```
+
+用 `ipconfig` 查看服务器的局域网 IPv4 地址，其他电脑通过 `http://服务器IP:4317` 打开网页；`0.0.0.0` 是监听地址，不是访问地址。也可将 `MAILBOX_HOST` 设为某块网卡的具体 IPv4 地址，仅监听该网卡。服务启动时读取网卡地址，地址变化后需重启；目前不支持自定义域名或 IPv6 监听。
+
+若 Windows 防火墙拦截，可在管理员 PowerShell 中添加仅限专用网络、本地子网的规则：
+
+```powershell
+New-NetFirewallRule -DisplayName "Agent Mailbox LAN" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 4317 -Profile Private -RemoteAddress LocalSubnet
+```
+
+其他电脑的 CLI 通过环境变量或 `--url` 访问（替换示例 IP）：
+
+```powershell
+$env:MAILBOX_URL = "http://192.168.1.100:4317"
+mailbox topic list
+# 或 mailbox --url http://192.168.1.100:4317 topic list
+```
+
+局域网访问只开放网页和 HTTP/CLI 操作。Codex App、Claude 通知仍使用服务所在电脑的本机 IPC，不支持直接登记另一台电脑的 agent 入口。关闭局域网监听时，清除 `MAILBOX_HOST` 后重启服务。
 
 ## 按项目组织讨论
 
