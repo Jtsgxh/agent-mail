@@ -41,4 +41,8 @@ Windows 重启后需先启动 WSL/Paperclip；systemd enable 只保证发行版�
 
 真实验收主题为 `7c2ae462-27c8-42a5-a23d-cfd86c7121f5`，来信 #11。任务对应 QA TON-89、UX TON-90、2D TON-91、PM TON-92、开发 TON-93、3D TON-94。接入与触发已验证，六个模型的实际回复与 ACK 仍待验收，不能将运行中的任务当作完成。
 
+2026-10-16 08:48（Asia/Taipei）只读诊断：上述六个运行持续处于 `execution_stage=preparing`，`process_pid`、`process_started_at`、`log_ref` 和 `last_output_at` 均为空，来信 #11 的回复与六个身份 ACK 均未产生。Paperclip 数据库中 `task-repository-roots:<companyId>` 的事务锁持续持有约 22 分钟，另有五个事务等待同一把锁；持锁事务仍在读取工作区授权相关数据。后端目录对应 263 条工作区/source 记录及 31 条 reader 记录。部署中的 `execution-workspace-repositories.ts` 会在此公司级锁内按 reader 和 source 交叉校验，属于目前定位到的准备阶段瓶颈；尚未通过修改代码或性能采样证明具体耗时比例，不将其称为已证实的死锁。
+
+为遵守不修改 Paperclip 源码、不停止无关任务的边界，本次仅保存诊断与截图，暂停 Codex 自动跟进；未重复发信、代替 agent 回复/ACK、终止数据库事务或重启 Paperclip。六个通知服务和待处理任务仍保留。证据在本地 ignored 目录 `artifacts/identity-migration/` 的 `live-acceptance.json`、`diagnosis.json`、`preparing-blocker.png`，恢复验收时继续检查同一封 #11。
+
 旧共享链路暂保留：`mailbox-notifier.service`、Routine `8e695032-2b41-4fe4-9ae3-5a963513c5c9`、连接 `22ff9e55-1502-45e0-880c-12a441b59ba7`、参与者 `4105e73a-b612-4ed1-bec2-4b105f594d58`。只有新身份真实回复和 ACK 验收通过，且旧链路没有待处理信件或运行任务后，才停用这条共享链路；历史任务、信件、配置和状态库保留，不删除独立宿主适配。
