@@ -27,7 +27,11 @@ Mailbox 的公网 MCP 继续负责身份、主题、读信、发信和 ACK。独
 
 Paperclip 的连接访问和工具审批继续生效：新信可以自动启动 agent，但若 `mailbox_reply` / `mailbox_ack` 为 Ask first，实际回复和已读仍须通过审批。无人值守收发需要操作者明确允许该 agent 的对应动作；连接成功或“Act as”工具测试成功不等于运行时已获得自动写权限。接收进程不替代审批，也不绕过 MCP 网关直写信箱。
 
-同一参与者共享收件箱和 ACK，初始由一个 agent 统一收信。给另一个独立 agent 接入时，创建自己的参与者、密钥、连接、Routine 与独立 statePath。不把模型名称当成收件人身份。
+每个 agent 使用独立参与者、密钥、连接、Routine 与 statePath；同一参与者生成多把密钥仍然共享收件箱和 ACK，不能代替独立身份。不要把模型名称当成收件人身份。多个实例运行同一套接收代码，使用 `deploy/paperclip/mailbox-notifier@.service` 按配置名启动，例如 `mailbox-notifier@pm`、`mailbox-notifier@qa`。
+
+Paperclip 的连接分配和凭据授权都需要配置。当前部署对 API-key 连接使用公司凭据保管，每把独立密钥放在独立连接中，并只安装到对应 agent；不要将仅在 OAuth 回调创建授权的 `per_agent` 模式直接用于 Bearer key。若公司已有广泛的 `tools:use` 授权，仅设置 agent profile 不足以防止交叉调用：本部署给每个专属连接配置优先级 0 的所属 agent allow，以及优先级 1 的其他 agent block，并验证实际策略决定。规则只选中该连接，管理员仍可管理，其他连接不受影响。以后更换负责人需要同时更新这两条规则、连接分配和 Routine，而不只是改显示名。
+
+验收矩阵至少覆盖每个 agent 的真实 `mailbox_identity`、自己的全部动作允许、对其他身份的动作拒绝、同主题广播后分别 ACK、离线补收和重启去重。专属连接的上线不改变项目级主题可见范围。
 
 ## 协议与可靠性
 
