@@ -1,6 +1,6 @@
 # 本机 Paperclip 独立身份通知
 
-部署于 WSL `Paperclip`，不修改 `/home/paperclip/src/paperclip` 源码，不重启 Paperclip 主服务。
+部署于 WSL `Paperclip`，通知接入复用现有 MCP、连接权限和 Routine 入口。后续用户授权的 Paperclip 共享根目录性能修复及部署情况见下方验收记录。
 
 - 服务：`mailbox-notifier@pm`、`@dev`、`@qa`、`@art2d`、`@art3d`、`@ux`，均以 `paperclip` 用户运行并 enable。六个实例复用同一程序，各自独立配置与状态。
 - 程序：`/opt/agent-mailbox-notifier/current` → `releases/notifications-20261016-01`。
@@ -39,10 +39,12 @@ Windows 重启后需先启动 WSL/Paperclip；systemd enable 只保证发行版�
 
 2026-10-16：138 项回归通过；六个专属连接的真实 MCP identity 均匹配，运行时策略矩阵为 60 项本人动作允许、300 项跨 agent 动作拒绝，六个 agent 均启用新版 skill。重启六个通知实例后，每个身份仍只有一个对应验收任务。
 
-真实验收主题为 `7c2ae462-27c8-42a5-a23d-cfd86c7121f5`，来信 #11。任务对应 QA TON-89、UX TON-90、2D TON-91、PM TON-92、开发 TON-93、3D TON-94。接入与触发已验证，六个模型的实际回复与 ACK 仍待验收，不能将运行中的任务当作完成。
+真实验收主题为 `7c2ae462-27c8-42a5-a23d-cfd86c7121f5`，来信 #11。QA TON-89、UX TON-90、2D TON-91、PM TON-92、开发 TON-93、3D TON-94 均已完成；六个身份各有唯一正确身份/校验码的回复（#12–17），并各自 ACK #11。模型通过真实 MCP 完成，未代替 agent 回复或 ACK。
 
-2026-10-16 08:48（Asia/Taipei）只读诊断：上述六个运行持续处于 `execution_stage=preparing`，`process_pid`、`process_started_at`、`log_ref` 和 `last_output_at` 均为空，来信 #11 的回复与六个身份 ACK 均未产生。Paperclip 数据库中 `task-repository-roots:<companyId>` 的事务锁持续持有约 22 分钟，另有五个事务等待同一把锁；持锁事务仍在读取工作区授权相关数据。后端目录对应 263 条工作区/source 记录及 31 条 reader 记录。部署中的 `execution-workspace-repositories.ts` 会在此公司级锁内按 reader 和 source 交叉校验，属于目前定位到的准备阶段瓶颈；尚未通过修改代码或性能采样证明具体耗时比例，不将其称为已证实的死锁。
+首次六任务验收曾因 Paperclip 的历史工作区交叉授权和公司级锁排队约 53 分钟，最终在旧代码下完成。数据库事务年龄包含排队时间，不等于精确持锁时长。后端同一目录有 263 条逻辑工作区记录；按 34 条 reader 计算，仅第一层就有 8,942 组权限检查。用户随后明确选择已授权项目根目录内共享文件的规则，WSL Paperclip 仓库提交 `9058574a` 实现并部署该模式（此后允许修改 Paperclip 的授权边界取代本次迁移最初的不改源码约束）。
 
-为遵守不修改 Paperclip 源码、不停止无关任务的边界，本次仅保存诊断与截图，暂停 Codex 自动跟进；未重复发信、代替 agent 回复/ACK、终止数据库事务或重启 Paperclip。六个通知服务和待处理任务仍保留。证据在本地 ignored 目录 `artifacts/identity-migration/` 的 `live-acceptance.json`、`diagnosis.json`、`preparing-blocker.png`，恢复验收时继续检查同一封 #11。
+共享根目录由主机 `/etc/paperclip/shared-workspace-roots.env` 固定到 RogueTower 已登记的客户端和后端目录，项目元数据不能扩大范围。当前身份、项目权限、受限任务和真实路径检查保留，历史任务记录不再作为这些目录内部的文件隔离边界。146 项相关 Paperclip 测试、服务端类型检查和编译通过；六个真实身份只读准入测量为 45 次查询、73–203ms。应用在确认无运行/排队任务后重启；仅部署两个服务模块，保留其他未提交改动。模块回滚备份在 `/var/backups/paperclip/shared-root-20261016-02`。
 
-旧共享链路暂保留：`mailbox-notifier.service`、Routine `8e695032-2b41-4fe4-9ae3-5a963513c5c9`、连接 `22ff9e55-1502-45e0-880c-12a441b59ba7`、参与者 `4105e73a-b612-4ed1-bec2-4b105f594d58`。只有新身份真实回复和 ACK 验收通过，且旧链路没有待处理信件或运行任务后，才停用这条共享链路；历史任务、信件、配置和状态库保留，不删除独立宿主适配。
+单身份离线实测：停 QA 通知进程时发送唯一来信 #18，没有新增任务；恢复后仅 QA 补收，创建 TON-95，约 3.4 秒启动模型，实际 MCP 回复 #19 并 ACK #18，其他五个身份任务数不变。主验收重启去重与本次离线补收分别有独立证据。证据在本地 ignored 的 `artifacts/identity-migration/` 和 `artifacts/workspace-root-fix/`，不含原始密钥。
+
+旧共享链路已退役：确认 TON-87/88 完成、旧参与者没有未处理定向消息后，暂停 Routine `8e695032-2b41-4fe4-9ae3-5a963513c5c9`，禁用连接 `22ff9e55-1502-45e0-880c-12a441b59ba7`，停止并 disable `mailbox-notifier.service`，撤销参与者 `4105e73a-b612-4ed1-bec2-4b105f594d58` 的唯一 roguetower 密钥。原配置和状态仍保留，并在 `/var/backups/agent-mailbox-notifier/shared-retired-20261016` 保存私有备份。六个实例保持 active/enabled；历史任务、信件和独立 Codex/Claude/relay 适配保留。Codex 自动跟进保持暂停，完成后不再轮询。
