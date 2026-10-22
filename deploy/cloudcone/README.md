@@ -6,6 +6,7 @@
 
 - 公网 MCP：`https://ashwellpages.net:8443/mcp`，要求项目范围 Bearer 密钥。
 - 管理页面：先运行本目录 `open-admin.ps1` 建立 SSH 隧道，再打开 `http://127.0.0.1:14317`。
+- SSH 私钥默认使用 `$env:USERPROFILE\.ssh\reality_debug_ed25519`；可用 `& .\deploy\cloudcone\open-admin.ps1 -KeyPath 'D:\SSH Keys\id_ed25519'` 指定其他路径，省略 `-KeyPath` 时保持默认行为。
 - 本次已启动本机 SSH 隧道；Windows 重启或隧道断开后重新运行脚本。
 - 公网 `/`、`/api/*` 返回 404。直接用浏览器打开 `/mcp` 返回 401 属于正常鉴权行为。
 - 在管理页面创建项目，点击“第三方接入”生成专用身份和密钥，然后把生成配置交给 Paperclip。旧本地信箱与 VPS 信箱各自独立；本次未更改 Paperclip 原连接。
