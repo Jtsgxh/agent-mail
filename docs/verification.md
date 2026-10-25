@@ -1,5 +1,21 @@
 # 第一版验收记录
 
+## Connector 唤醒同时支持 Codex 与 Claude，并合并 `/mcp/events` 客户端（2026-10-25）
+
+- 聊天唤醒接收器与 Paperclip 通知进程原先各自实现 `/mcp/events` 的 URL 校验、密钥格式、事件地址、心跳、身份/信封核对和重连，现统一到 `src/connector-subscription.js`。两者的差异只剩重连策略（唤醒：1、3、10、30 秒有限重连；Paperclip：指数退避最长 60 秒、无限重连）和事件处理。
+- 宿主差异集中在 `src/wake-hosts.js`，`bin/mailbox-connector-wake.js` 新增 `--host codex|claude`（默认 `codex`，原有命令不变）。Claude 从 `.claude.json` 的 local/user scope 读取同名 HTTP 连接，目标为 `CLAUDE_CODE_SESSION_ID`，通过本会话原生收件入口唤醒。状态库默认路径改为相对本仓库，Codex 既有状态库位置和绑定格式不变，已运行的 Codex 接收器重启后继续使用原状态库。
+- 能证明未写出任何内容的唤醒失败（收件入口 `ENOENT` / `ECONNREFUSED`）先有限重试，仍失败则撤销占位，不再被记为“结果不明”而阻止重启补投。
+- 行为变化：Paperclip 通知进程遇密钥被拒绝/撤销或通知身份不符时退出（原先无限重连），由 systemd 重启；无效事件不再静默重连。`close()` 在此情况下仍正常释放状态库。
+- `npm run check` 现包含唤醒相关文件（原 `check:connector-wake` 已并入）；`npm test` **148/148 通过**，新增 Claude 后台 CLI（真实本机命名管道、local scope 优先）、可重试唤醒失败、订阅拒绝密钥/错误身份、Paperclip 撤销密钥退出 4 项。
+- 真实公网：本 Claude 会话 `a276d827-e3d1-4ad5-9b00-bfdea6533f40` 以 `--host claude --background` 订阅 `roguetower` / `Claude`、主题 `231bacf4-bdf6-41bd-a2bd-e97830ffd43a`，`--status` 为 `connected=true`、`processAlive=true`；`--test-wake` 自检通知实际进入该会话。尚未用真实远端新信验证取信、回信和 ACK。未重启 GPT 的 Codex 接收器（PID 123392，仍运行旧代码），未发送信件或改变 ACK。
+
+## 公网 Connector 唤醒当前 Codex 聊天（2026-10-25）
+
+- 新增本机 `mailbox-connector-wake` 接收器，保留现有 HTTP MCP 连接的项目密钥身份，通过 `/mcp/events` 收通知、项目 MCP 核对待处理信件、`codex queue` 唤醒启动接收器的当前聊天。不访问公网管理 API，不代发信件或 ACK。持久化去重、单进程绑定、队列结果不明停止、撤销密钥停止和有限断线重连均有隔离测试。
+- 最终 `npm test` **144/144 通过**；原有 `npm run check`、新增 `npm run check:connector-wake` 和 `git diff --check` 通过。新增 6 项测试使用真实本机 HTTP/MCP/WebSocket、SQLite 及后台 CLI 子进程，队列出口使用测试 CLI，不能替代真实模型收信验收。
+- 真实公网 `https://ashwellpages.net:8443/mcp/events` 已建立订阅，绑定 `roguetower` / `GPT`、主题 `231bacf4-bdf6-41bd-a2bd-e97830ffd43a`、当前聊天 `01a17350-1e6c-7fb3-85a5-00a534e883a6`。后台 PID `123392` 在父命令退出后仍运行，状态 `connected=true`、`error=null`。状态库和运行日志保存在本机被忽略的 `.mailbox/connector-wakes/`，无密钥。
+- 真实 Codex CLI 接受本机自检队列项 `01a1735b-a8f1-7e31-a204-06940848a744`，目标为上述当前聊天；上一轮结束后，自检通知实际进入该聊天并启动模型，模型随后只读核对接收器仍为 `connected=true`、`processAlive=true`、`error=null`。这证明本机队列到当前模型的唤醒路径。本轮实时收件箱为空，因此尚未证明真实远端新信唤醒后模型主动取信、回信和 ACK。未向其他参与者发送测试消息，未改变 ACK，未重启服务器、创建聊天或配置 Windows 开机启动。
+
 ## 移除 Claude 自主创建（2026-09-11）
 
 - 用户要求撤下未完成验收的 Claude 自主创建功能。删除桌面链接创建器、专用状态处理、CLI 帮助和 README 中的创建流程，以及 Claude 创建 smoke 入口和相关测试。技能中的创建指引已在前一提交移除。

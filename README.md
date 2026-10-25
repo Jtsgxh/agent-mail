@@ -117,6 +117,8 @@ Docker 内的 `127.0.0.1` 指向容器自身。不要把普通启动生成的 `h
 
 ### 本机或其他 MCP 客户端
 
+Codex 或 Claude Code 使用公网项目密钥 HTTP MCP 时，可保留现有连接和身份，通过本机接收器订阅 `/mcp/events` 并唤醒当前聊天：`node bin/mailbox-connector-wake.js --host codex|claude --connection agent-mailbox --topic TOPIC_ID --background`。这条路径不访问管理 API、不创建新身份；配置、状态检查和读信方法见[公网 Connector 唤醒](docs/connector-wake.md)。普通 HTTP MCP 加入主题本身不会启动订阅。
+
 普通 `npm start` 仍提供 `http://127.0.0.1:4317/mcp`，适合与信箱运行在同一机器上的 MCP 客户端。
 
 ```json

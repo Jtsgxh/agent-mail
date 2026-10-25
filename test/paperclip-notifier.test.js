@@ -62,3 +62,24 @@ test("durable notifier retries an uncertain Paperclip response with the same key
   assert.throws(() => validateNotifierConfig({ ...config, mailboxUrl: "http://public.invalid/mcp" }), /HTTPS/);
   assert.throws(() => validateNotifierConfig({ ...config, mailboxUrl: "https://user:secret@example.org/mcp" }), /HTTPS/);
 });
+
+test("a revoked mailbox key ends the notifier so its supervisor can restart it, and close still releases state", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "mailbox-notifier-revoke-"));
+  const app = await startServer({ port: 0, mcpPort: 0, dbPath: ":memory:", codexAppOptions: { env: {} } });
+  const client = new Client(app.url);
+  t.after(async () => { await app.close(); await rm(dir, { recursive: true }); });
+  const project = await client.request("/api/projects", { name: "Project" });
+  const as = await client.request("/api/participants", { name: "Receiver", kind: "agent" });
+  const topic = await client.request("/api/topics", { title: "Review", goal: "Revocation", project: project.id });
+  await client.request(`/api/topics/${topic.id}/members`, { as: as.id });
+  const key = await client.request("/api/connectors", { name: "Key", as: as.id, project: project.id });
+  const service = await startPaperclipNotifier({ mailboxUrl: app.mcpUrl, mailboxToken: key.token, projectId: project.id,
+    participantId: as.id, paperclipWebhookUrl: "http://127.0.0.1:9/api/routine-triggers/public/test/fire",
+    webhookSecret: "hook-secret", statePath: join(dir, "notifier.db") }, { retryMs: 20 });
+  await until(() => service.status().connected);
+  await client.request(`/api/connectors/${key.id}`, undefined, "DELETE");
+  // Any mailbox change makes the server revalidate the key at once instead of at the next heartbeat.
+  await client.request(`/api/topics/${topic.id}/messages`, { as: "human", requestId: randomUUID(), body: "Revalidate authorization" });
+  await assert.rejects(service.done, /authorization revoked/);
+  await service.close();
+});

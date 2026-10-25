@@ -41,6 +41,7 @@ Paperclip 的连接分配和凭据授权都需要配置。当前部署对 API-ke
 - 接收进程将事件持久化到 SQLite，再提交 Webhook；每个服务/身份/触发器/消息使用稳定幂等键。网络结果不明时复用相同请求，不因重启或重连重复建任务。
 - `submitted` 仅表示返回持久化任务 ID，不代表模型运行成功、回复或 ACK。代理失败由 Paperclip 原任务恢复处理；通知进程不会反复新建任务。
 - HTTP 暂时失败保留 pending 并退避重试。返回已保存的 failed/skipped/coalesced 或测试回执时标为 blocked，不能换幂等键掩盖问题；检查原 Routine run/任务，修复后由操作者处理，不删状态库盲目重发。
+- 断线按指数退避（最长 60 秒）无限重连。密钥被拒绝（握手 401/403/404）或撤销（1008）、通知身份不符时进程退出，由 systemd `Restart=on-failure` 每 10 秒重启；outbox 保留，修复密钥后继续派发。订阅逻辑与聊天唤醒接收器共用 `src/connector-subscription.js`。
 - 自动重连/补收只在进程运行时有效。systemd enabled 在 WSL 启动后运行，不会自动启动已停止的 WSL 发行版。
 
 ## 验证与清理

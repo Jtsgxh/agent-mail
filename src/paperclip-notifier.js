@@ -1,29 +1,17 @@
-import WebSocket from "ws";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function safeUrl(value, path) {
-  const url = new URL(value);
-  if (url.username || url.password || url.search || url.hash ||
-      !(url.protocol === "https:" || (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) ||
-      !path.test(url.pathname)) throw new Error("Use HTTPS or loopback HTTP without URL credentials");
-  return url;
-}
+import { connectorToken, connectorUrls, secureUrl, subscribeConnectorEvents, uuid } from "./connector-subscription.js";
 
 export function validateNotifierConfig(config) {
-  const mailbox = safeUrl(config.mailboxUrl, /^\/mcp$/);
-  const webhook = safeUrl(config.paperclipWebhookUrl, /^\/api\/routine-triggers\/public\/[^/]+\/fire$/);
-  if (!/^amb_[A-Za-z0-9_-]{43}$/.test(config.mailboxToken ?? "") ||
+  const { mcp: mailbox, events: socket } = connectorUrls(config.mailboxUrl);
+  const webhook = secureUrl(config.paperclipWebhookUrl, /^\/api\/routine-triggers\/public\/[^/]+\/fire$/);
+  if (!connectorToken.test(config.mailboxToken ?? "") ||
       !uuid.test(config.projectId ?? "") || !uuid.test(config.participantId ?? "") ||
       typeof config.webhookSecret !== "string" || !config.webhookSecret.trim() ||
       typeof config.statePath !== "string" || !config.statePath) throw new Error("Incomplete notifier configuration");
-  const socket = new URL(mailbox);
-  socket.protocol = mailbox.protocol === "https:" ? "wss:" : "ws:";
-  socket.pathname = "/mcp/events";
   return { mailbox, webhook, socket };
 }
 
@@ -46,55 +34,27 @@ export async function startPaperclipNotifier(config, { signal, onState = () => {
   }
   const stop = new AbortController();
   const combined = signal ? AbortSignal.any([signal, stop.signal]) : stop.signal;
-  let socket, connected = false, stopping = false;
+  let connected = false, stopping = false;
   const status = () => ({ connected,
     counts: db.prepare("SELECT status,COUNT(*) AS count FROM notifier_events GROUP BY status").all() });
   const emit = (type, extra = {}) => onState({ type, ...extra });
   const pause = (ms) => delay(ms, undefined, { signal: combined }).catch(() => {});
 
-  async function listen() {
-    let failures = 0;
-    while (!combined.aborted) {
-      await new Promise((resolve) => {
-        let ready = false, lastSeen = Date.now();
-        socket = new WebSocket(urls.socket, { headers: { Authorization: `Bearer ${config.mailboxToken}` },
-          handshakeTimeout: 10000, maxPayload: 8192, followRedirects: false });
-        const current = socket;
-        const abort = () => current.terminate();
-        combined.addEventListener("abort", abort, { once: true });
-        const watchdog = setInterval(() => {
-          if (Date.now() - lastSeen > (ready ? 45000 : 10000)) current.terminate();
-        }, 1000);
-        current.on("ping", () => { lastSeen = Date.now(); });
-        current.on("error", () => {}); // Never log library errors containing endpoint/headers.
-        current.on("message", (raw) => {
-          try {
-            const event = JSON.parse(raw.toString());
-            if (event.version !== 1 || event.projectId !== config.projectId || event.participantId !== config.participantId)
-              throw new Error("scope");
-            lastSeen = Date.now();
-            if (event.type === "mailbox.ready") {
-              ready = true; connected = true; failures = 0; emit("connected"); return;
-            }
-            if (!ready || event.type !== "mailbox.message" || !uuid.test(event.topicId ?? "") ||
-                !Number.isSafeInteger(event.messageId) || event.messageId < 1) throw new Error("event");
-            const payload = { type: "mailbox.message", version: 1, projectId: config.projectId,
-              participantId: config.participantId, topicId: event.topicId, messageId: event.messageId };
-            const id = "mailbox:" + createHash("sha256").update(binding).update(":" + event.messageId).digest("hex");
-            const saved = db.prepare("INSERT OR IGNORE INTO notifier_events(id,payload) VALUES (?,?)")
-              .run(id, JSON.stringify(payload));
-            if (saved.changes) emit("received", { messageId: event.messageId });
-          } catch { emit("invalid_event"); current.close(1008, "Invalid notification"); }
-        });
-        current.once("close", () => {
-          connected = false; clearInterval(watchdog); combined.removeEventListener("abort", abort);
-          emit("disconnected"); resolve();
-        });
-        if (combined.aborted) abort();
-      });
-      if (!combined.aborted) await pause(Math.min(60000, retryMs * 2 ** Math.min(failures++, 6)));
-    }
-  }
+  // A rejected or revoked key ends the process; systemd restarts it and the outbox resumes.
+  const listen = () => subscribeConnectorEvents({ url: urls.socket, authorization: `Bearer ${config.mailboxToken}`,
+    participantId: config.participantId, projectId: config.projectId, signal: combined,
+    retryDelay: (attempt) => Math.min(60000, retryMs * 2 ** Math.min(attempt, 6)),
+    onReady: () => { connected = true; emit("connected"); },
+    onDisconnect: () => { connected = false; emit("disconnected"); },
+    onMessage: ({ topicId, messageId }) => {
+      const payload = { type: "mailbox.message", version: 1, projectId: config.projectId,
+        participantId: config.participantId, topicId, messageId };
+      const id = "mailbox:" + createHash("sha256").update(binding).update(":" + messageId).digest("hex");
+      const saved = db.prepare("INSERT OR IGNORE INTO notifier_events(id,payload) VALUES (?,?)")
+        .run(id, JSON.stringify(payload));
+      if (saved.changes) emit("received", { messageId });
+    },
+  });
 
   async function dispatch() {
     while (!combined.aborted) {
@@ -132,11 +92,11 @@ export async function startPaperclipNotifier(config, { signal, onState = () => {
     }
   }
   const done = Promise.all([listen(), dispatch()]);
-  // Surface unexpected bugs to the caller rather than losing a background promise.
+  // Surface key rejection and unexpected bugs to the caller through `done`; close() always releases the state.
   done.catch(() => stop.abort());
   return { status, done, async close() {
-    if (stopping) return done;
-    stopping = true; stop.abort(); socket?.terminate();
-    try { await done; } finally { db.close(); }
+    if (stopping) return done.catch(() => {});
+    stopping = true; stop.abort();
+    try { await done.catch(() => {}); } finally { db.close(); }
   } };
 }
