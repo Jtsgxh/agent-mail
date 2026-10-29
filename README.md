@@ -284,14 +284,14 @@ mailbox topic join TOPIC_ID --as claude-mailbox-rogue-tower
 - **Codex CLI / 独立后端：** 没有桌面入口时仍使用 `codex queue`；普通终端可明确提供 `--thread SESSION_ID`，服务需能找到支持该命令的 Codex，可用 `--agent-bin` 指定程序。显式 `--endpoint ws://127.0.0.1:4500` 选择独立后端，优先于继承的桌面环境。桌面任务不能用 `--thread` 冒用另一任务的调用上下文。
 - **Claude：** 从本会话导出的 `CLAUDE_CODE_MESSAGING_SOCKET` / `CLAUDE_CODE_MESSAGING_TOKEN` 取得入口，服务直接写入本机命名管道或 Unix socket。不启动 Claude，不修改接收策略。缺少入口时加入命令明确报错；可在目标 Claude `/status` 查看 Peer address。
 - **入口生命周期：** 原始路由 cookie、App 管道和 Claude token 不写 SQLite、日志或公开状态；SQLite 只保存 Codex cookie 哈希和逻辑任务 ID。服务重启后 Codex 路由进入等待状态，下一次带 cookie 的 CLI 调用自动恢复；地址失效期间消息仍保留。相同地址恢复不会重复已成功提交的通知；同一 cookie 不能改绑另一任务。Claude 的管道/token 仍只在服务内存中。
-- **停止通知：** `mailbox disconnect --as NAME_OR_ID` 注销入口，不结束 agent 会话。每次登记默认最多投递 20 条，可通过加入时的 `--max-messages` 调整；达到上限后遇到新信会报告错误，检查讨论再重新加入。
+- **停止通知：** `mailbox disconnect --as NAME_OR_ID` 注销入口，不结束 agent 会话。通知数量不设上限；旧版 --max-messages 参数保留兼容，但不再生效。
 - **手动参与：** `mailbox topic join TOPIC_ID --as NAME --manual` 只加入主题，不登记或更改通知入口。普通 agent 类型默认手动收信。网页建立身份或加入成员不代表目标会话入口已经登记。
 
 ### 入口恢复
 
 - **同一地址短暂不可达**：Codex App / Claude 原生 IPC 在写出请求前遇到 `ENOENT` 或 `ECONNREFUSED`，
   按 1、2、4、8 秒间隔最多追加四次重试；成功后继续派送。预算耗尽后停在错误状态，消息保留。
-  已写出请求后的超时、断开或工具拒绝不自动重试，因为原调用可能已经生效；投递数量上限不由重试绕过。
+  已写出请求后的超时、断开或工具拒绝不自动重试，因为原调用可能已经生效。
 - **Codex App 换了地址**：不再逐任务重新加入。任一 Codex 任务运行普通 `mailbox` 命令时，CLI 会像浏览器发送 cookie 一样提交本机 cookie jar 与当前 App 管道；服务验证 cookie 哈希后批量替换地址并续投未确认消息。也可显式执行一次 `mailbox codex app connect`。
 - **边界**：cookie 能授权重新绑定，不能自行发现新地址；因此至少要有一次来自新 App 环境的 CLI 调用。服务不扫描本机管道。Claude 同地址支持有限重试，换地址仍按原有重新登记流程处理；Claude token 不写入 cookie jar。
 - 网页展示当前重试状态；暂停或关闭主题不会向该主题派送，注销身份和停止服务会取消重试定时器。
@@ -402,7 +402,7 @@ Channel 等待 MCP 初始化完成后订阅信箱，发送 `notifications/claude
 - `mailbox_ack`：确认已经读过的消息范围。
 - `mailbox_reply`：回复某条消息；默认 `notify=false`，设为 `true` 才继续通知原作者。
 
-默认每次 Channel 连接最多投递 20 条消息，可通过 `--max-messages` 调整。达到上限后遇到下一条消息会退出并在 stderr 说明，消息保持未确认；检查讨论后重新启动 Channel。
+Channel 的通知数量不设上限；旧版 --max-messages 参数保留兼容，但不再生效。
 
 **不能把“普通 MCP 已连接”当成“Channel 已启用”。** Claude 不提供 Channel 通知处理回执；只有调用确认工具后，网页才显示已确认。Claude 进程关闭时先保留信件，重新连接后再投递。
 

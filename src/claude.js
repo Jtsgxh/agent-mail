@@ -7,7 +7,7 @@ import { clientMailbox } from "./mailbox-client.js";
 export async function startClaudeChannel(
   client,
   as,
-  { signal, maxMessages = 20, transport = new StdioServerTransport() } = {},
+  { signal, transport = new StdioServerTransport() } = {},
 ) {
   await client.request(`/api/inbox?as=${encodeURIComponent(as)}`);
   const server = new Server(
@@ -45,7 +45,6 @@ Duplicate message IDs may be delivered after reconnect; check history before rep
       ),
     ]);
     if (combined.aborted) return;
-    let count = 0;
     for await (const { event, data } of client.events(
       `/api/bridge/events?as=${encodeURIComponent(as)}&kind=claude`,
       combined,
@@ -62,10 +61,6 @@ Duplicate message IDs may be delivered after reconnect; check history before rep
         )
       )
         continue;
-      if (count >= maxMessages)
-        throw new Error(
-          `本次 Channel 已投递 ${maxMessages} 条消息，重启连接后继续`,
-        );
       try {
         await server.notification({
           method: "notifications/claude/channel",
@@ -79,7 +74,6 @@ Duplicate message IDs may be delivered after reconnect; check history before rep
           },
         });
         await client.request(`/api/deliveries/${data.id}`, { as });
-        count++;
       } catch (e) {
         if (e.status === 404) {
           console.error(`消息 #${data.id} 所属主题已删除，继续等待其他主题`);

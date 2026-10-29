@@ -6,7 +6,7 @@ import {
   validateClaudeAddress,
   writeClaude,
 } from "./native.js";
-import { HttpError, required, number } from "./store.js";
+import { HttpError, required } from "./store.js";
 import { notificationRetryDelays } from "./notification-recovery.js";
 
 // Session addresses and credentials belong to this service lifetime, never SQLite or public state.
@@ -33,7 +33,6 @@ export class NativeRecipients {
       status: "ready",
       registered_at: registeredAt,
       sent,
-      count: 0,
       controller: new AbortController(),
       task: null,
       retryCount: 0,
@@ -52,7 +51,8 @@ export class NativeRecipients {
     const target = {
       kind: participant.kind,
       token: null,
-      maxMessages: number(input.maxMessages ?? 20, "maxMessages", 1),
+      // 旧字段仅供历史路由和客户端兼容，不再限制投递数量。
+      maxMessages: 20,
     };
     if (input.token !== undefined)
       target.token = required(input.token, "token", 16000);
@@ -150,14 +150,16 @@ export class NativeRecipients {
   async resumeCodex(routes, pipe) {
     const resumed = [];
     for (const persisted of routes) {
-      if (persisted.resume_blocked) continue;
+      // 旧版仅因数量上限停止的路由可安全恢复，其他投递不确定状态仍须人工检查。
+      if (persisted.resume_blocked && persisted.error !== "本次通知已达上限；检查讨论后重新加入主题可继续") continue;
+      if (persisted.resume_blocked) this.store.setNotificationRouteFailure(persisted.participant_id, null, false);
       const id = persisted.participant_id;
       const old = this.routes.get(id);
       const target = {
         kind: "codex",
         thread: persisted.native_id,
         token: null,
-        maxMessages: persisted.max_messages,
+        maxMessages: 20,
         transport: "desktop-app",
         app: { pipe, threadId: persisted.native_id },
       };
@@ -253,8 +255,6 @@ export class NativeRecipients {
       ]);
       route.delivery = { topic: message.topic_id, controller };
       try {
-        if (route.count >= route.target.maxMessages)
-          throw new Error("本次通知已达上限；检查讨论后重新加入主题可继续");
         const text = notificationText(
           { ...message, topic: this.store.topic(message.topic_id) },
           id,
@@ -273,7 +273,6 @@ export class NativeRecipients {
         signal.throwIfAborted();
         this.store.delivery(message.id, id);
         this.store.setNotificationRouteFailure(id, null, false);
-        route.count++;
         route.retryCount = 0;
         route.retryAt = null;
         route.retryMessageId = null;

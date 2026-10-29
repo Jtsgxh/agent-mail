@@ -16,13 +16,11 @@ export function relayStatePath(env = process.env) {
 
 // 订阅远端 HTTP，由本机 App 或 MCP 队列入口唤醒绑定任务，绝不上传管道信息。
 export async function runRelay(client, participant, {
-  env = process.env, signal, maxMessages = 20, topic,
+  env = process.env, signal, topic,
   onReady = () => {}, onRetry = () => {},
   retryDelays = notificationRetryDelays, wake,
 } = {}) {
   if (participant.kind !== "codex") throw new Error("远端转发目前只支持 Codex");
-  if (!Number.isSafeInteger(maxMessages) || maxMessages < 1)
-    throw new Error("maxMessages 必须为正整数");
   signal?.throwIfAborted();
   const context = wake ? { threadId: wake.threadId } : appContext(env);
   const app = wake ? null : new CodexApp({ env });
@@ -30,7 +28,7 @@ export async function runRelay(client, participant, {
   const statePath = relayStatePath(env);
   await mkdir(dirname(statePath), { recursive: true });
   const db = new DatabaseSync(statePath);
-  let count = 0, reconnects = 0;
+  let reconnects = 0;
   try {
     db.exec(`PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS bindings (
@@ -80,7 +78,6 @@ export async function runRelay(client, participant, {
               .get(client.url, participant.id, data.id);
             let submitted = previous?.status === "submitted";
             if (!submitted) {
-              if (count >= maxMessages) throw new Error("本次通知已达上限，请检查讨论后重新启动转发器");
               // 提交前先持久化占位；崩溃或提交结果不明时，重启也不能盲目再次唤醒。
               const claimed = previous
                 ? db.prepare("UPDATE deliveries SET status='pending' WHERE origin=? AND participant=? AND message=? AND status='retryable'")
@@ -96,7 +93,6 @@ export async function runRelay(client, participant, {
                     { context, signal });
                 db.prepare("UPDATE deliveries SET status='submitted' WHERE origin=? AND participant=? AND message=?")
                   .run(client.url, participant.id, data.id);
-                count++;
                 submitted = true;
               } catch (error) {
                 if (error.retryableNotification)

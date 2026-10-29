@@ -192,8 +192,8 @@ test("ambiguous IPC failure persists and cannot be replayed or rebound after res
   await assert.rejects(runRelay(f.client, f.participant, { env: otherEnv }), /已绑定另一 Codex 任务/);
 });
 
-// 发送前管道不可达可以安全重试；成功后仍受本次通知数量上限限制。
-test("pre-write IPC failure retries safely without resetting the message budget", async (t) => {
+// 发送前管道不可达可以安全重试；成功后通知数量不受旧参数限制。
+test("pre-write IPC failure retries safely and delivery has no message limit", async (t) => {
   const f = await fixture(t);
   let retries = 0;
   const run = f.start({ maxMessages: 1,
@@ -212,9 +212,13 @@ test("pre-write IPC failure retries safely without resetting the message budget"
   await until(async () => (await f.client.request(`/api/inbox?as=${f.participant.id}`)).notifications[0]?.notified_at);
   assert.equal(retries, 1);
   assert.equal(f.sends.length, 1);
-  await f.post();
-  assert.match((await run.done).message, /上限/);
-  assert.equal(f.sends.length, 1);
+  for (let i = 0; i < 22; i++) {
+    await f.post();
+    await until(() => f.sends.length === i + 2);
+  }
+  assert.equal(f.sends.length, 23);
+  run.stop.abort();
+  await run.done;
 });
 
 // 连续快速断流会耗尽预算，不能每次 ready 就清零导致无限重连。

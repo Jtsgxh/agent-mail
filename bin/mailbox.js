@@ -18,7 +18,7 @@ mailbox connect claude --as NAME --background
 mailbox connect codex --as NAME --list
 mailbox connect claude --as NAME --preview
 mailbox disconnect --as NAME
-mailbox relay --as ID_OR_NAME [--topic TOPIC_ID] [--background] [--max-messages 20]
+mailbox relay --as ID_OR_NAME [--topic TOPIC_ID] [--background]
 
 mailbox project create --name NAME
 mailbox project list
@@ -44,7 +44,7 @@ mailbox post TOPIC --as ID --body TEXT [--to ID --to ID | --broadcast] [--reply-
 mailbox ack TOPIC --as ID --through MESSAGE_ID
 mailbox inbox --as ID
 mailbox wait TOPIC --as ID [--after ID] [--timeout 60]
-mailbox bridge claude --as ID [--max-messages 20]
+mailbox bridge claude --as ID
 mailbox bridge codex --as ID --endpoint ws://127.0.0.1:4500 --thread THREAD_ID [--max-turns 12]
 mailbox codex threads --endpoint ws://127.0.0.1:4500
 mailbox codex app connect

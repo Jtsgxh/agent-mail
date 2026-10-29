@@ -141,12 +141,9 @@ export async function listenNative(
     socket,
     token,
     signal,
-    maxMessages = 20,
     onReady = () => {},
   },
 ) {
-  if (!Number.isSafeInteger(maxMessages) || maxMessages < 1)
-    throw new Error("maxMessages 必须为正整数");
   if (participant.kind === "codex") {
     if (!thread)
       throw new Error(
@@ -155,7 +152,6 @@ export async function listenNative(
   } else if (participant.kind === "claude")
     validateClaudeAddress(socket, token);
   else throw new Error("原生通知仅支持 codex / claude");
-  let count = 0;
   for await (const { event, data } of client.events(
     `/api/bridge/events?as=${encodeURIComponent(participant.id)}&kind=${participant.kind}-native`,
     signal,
@@ -173,8 +169,6 @@ export async function listenNative(
       (m) => m.id === data.id && m.topic_status === "open",
     );
     if (!pending) continue;
-    if (count >= maxMessages)
-      throw new Error(`本次已通知 ${maxMessages} 条消息，请检查讨论后重新连接`);
     try {
       const text = notificationText(data, participant.id, client.url);
       if (participant.kind === "codex")
@@ -183,7 +177,6 @@ export async function listenNative(
       await client.request(`/api/deliveries/${data.id}`, {
         as: participant.id,
       });
-      count++;
       console.error(`消息 #${data.id} 已递交原生入口；阅读确认由原会话完成`);
     } catch (error) {
       if (error.status === 404) {

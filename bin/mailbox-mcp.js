@@ -15,7 +15,7 @@ try {
     help: { type: "boolean" },
   } });
   if (values.help) {
-    console.error("mailbox-mcp [--url HTTP_OR_HTTPS_URL] [--max-messages 20]\n由 Codex 作为 STDIO MCP 启动；首次 mailbox_join 后自动接收新信。");
+    console.error("mailbox-mcp [--url HTTP_OR_HTTPS_URL]\n由 Codex 作为 STDIO MCP 启动；首次 mailbox_join 后自动接收新信。");
   } else {
     const maxMessages = Number(values["max-messages"]);
     if (!Number.isSafeInteger(maxMessages) || maxMessages < 1) throw new Error("max-messages 必须为正整数");

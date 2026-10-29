@@ -297,6 +297,7 @@ test("Codex native notification only invokes queue, preserves messages and never
   const f = await fixture(t);
   const stop = new AbortController();
   const run = listenNative(f.client, f.p, {
+    maxMessages: 1,
     program: f.program,
     thread: "existing-session",
     signal: stop.signal,
@@ -329,6 +330,9 @@ test("Codex native notification only invokes queue, preserves messages and never
   const page = await f.client.request(`/api/topics/${f.topic.id}/messages`);
   assert.equal(page.messages.length, 1);
   assert.equal(page.messages[0].id, m.id);
+  // 旧参数为 1 时第二条也必须正常投递。
+  const second = await f.post();
+  await until(async () => (await f.client.request("/api/inbox?as=" + f.p.id)).notifications.some((item) => item.id === second.id && item.notified_at));
   await disconnectMailbox(f.client, f.p.name);
   await run;
 });

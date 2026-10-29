@@ -47,6 +47,7 @@ test("Claude: real MCP SDK initialize → channel notification → read → repl
     InMemoryTransport.createLinkedPair();
   const channel = await startClaudeChannel(f.client, f.agent.id, {
     transport: channelTransport,
+    maxMessages: 1,
   });
   const host = new McpClient({ name: "test-host", version: "1" });
   const incoming = [];
@@ -121,6 +122,12 @@ test("Claude: real MCP SDK initialize → channel notification → read → repl
   await f.post("after idle");
   await waitFor(() => incoming.length === 2);
   assert.match(incoming[1].content, /after idle/);
+  // 旧配置为 1 时，超过旧默认上限后 Channel 仍能持续收到通知。
+  for (let i = 0; i < 21; i++) {
+    await f.post("extra " + i);
+    await waitFor(() => incoming.length === i + 3);
+  }
+  assert.equal(incoming.length, 23);
 });
 
 test("Claude: actual mailbox CLI works over MCP stdio without stdout log pollution", async (t) => {

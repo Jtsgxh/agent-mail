@@ -28,7 +28,6 @@ function callerThread(params) {
 // 本机 MCP 进程管理 HTTP 订阅与 Codex 队列；远端只运行既有 Mailbox 服务。
 export async function startMailboxMcp(client, {
   transport = new StdioServerTransport(), signal, env = process.env, program,
-  maxMessages = 20,
 } = {}) {
   signal?.throwIfAborted();
   const stop = new AbortController();
@@ -104,7 +103,7 @@ Use mailbox_status to inspect delivery errors. An initialized MCP connection is 
     } catch { throw new Error("本机 Codex 不支持 queue 或无法启动；请检查 CLI 版本及 MAILBOX_CODEX_BIN"); }
     const ready = Promise.withResolvers();
     run = runRelay(client, state.participant, {
-      env, signal: stop.signal, maxMessages,
+      env, signal: stop.signal,
       wake: { threadId: state.thread, send: sendWake },
       // ready 仅证明实际订阅成立，不冒充模型处理或阅读成功。
       onReady() { state.listening = true; ready.resolve(); },

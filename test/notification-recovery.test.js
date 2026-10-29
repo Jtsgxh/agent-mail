@@ -118,7 +118,7 @@ test("a pipe coming back at the same address automatically receives the pending 
   assert.equal(f.route().error, null);
 });
 
-test("retry budget is finite and restarting a retry does not bypass the delivery limit", async (t) => {
+test("retry budget is finite and successful delivery has no message limit", async (t) => {
   const f = fixture(t);
   await f.register();
   await until(() => !f.route().task);
@@ -132,11 +132,29 @@ test("retry budget is finite and restarting a retry does not bypass the delivery
   f.alive.add("old-pipe");
   await f.register();
   await until(() => !!f.delivery(message.id).notified_at && !f.route().task);
+  // 旧参数不能限制后续通知，超过旧默认上限后仍持续投递。
   f.route().target.maxMessages = 1;
-  f.post();
-  await until(() => f.route().status === "error");
-  assert.match(f.route().error, /上限/);
-  assert.equal(f.calls.length, 4, "maxMessages must be checked before contacting the endpoint");
+  for (let i = 0; i < 22; i++) {
+    const next = f.post();
+    await until(() => !!f.delivery(next.id).notified_at && !f.route().task);
+  }
+  assert.equal(f.calls.length, 26);
+  assert.equal(f.route().status, "ready");
+});
+
+// 旧版上限在投递前触发，可恢复；其他结果不明的失败仍保持阻断。
+test("persisted legacy limit failure resumes pending delivery", async (t) => {
+  const f = fixture(t);
+  f.store.saveNotificationRoute(f.participant.id, {
+    kind: "codex", nativeId: "own-task", cookieHash: "test-cookie-hash", maxMessages: 1,
+  });
+  f.store.join(f.topic.id, f.participant.id);
+  f.store.setNotificationRouteFailure(f.participant.id, "本次通知已达上限；检查讨论后重新加入主题可继续", true);
+  const message = f.store.post(f.topic.id, { as: "human", to: f.participant.id, body: "pending", requestId: randomUUID() });
+  await f.recipients.resumeCodex(f.store.notificationRoutes(), "new-pipe");
+  await until(() => !!f.delivery(message.id).notified_at);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.store.notificationRoute(f.participant.id).resume_blocked, 0);
 });
 
 test("ambiguous failures are not automatically retried", async (t) => {

@@ -15,7 +15,7 @@ try {
     background: { type: "boolean" }, help: { type: "boolean" },
   } });
   if (values.help) {
-    console.log("在目标 Codex App 任务内运行：node bin/mailbox-relay.js --url http://服务器IP:4317 --as 本会话身份ID [--topic 主题ID] [--background] [--max-messages 20]");
+    console.log("在目标 Codex App 任务内运行：node bin/mailbox-relay.js --url http://服务器IP:4317 --as 本会话身份ID [--topic 主题ID] [--background]");
   } else {
     if (!values.as) throw new Error("缺少 --as，请先通过 HTTP 创建本会话的独立 Codex 身份");
     if (!/^\d+$/.test(values["max-messages"])) throw new Error("--max-messages 必须为正整数");
